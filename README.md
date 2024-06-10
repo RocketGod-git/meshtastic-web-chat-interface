@@ -11,7 +11,7 @@ Before running the application, ensure that you have the following:
 
 ## Running the Application
 
-1. Start the Flask server by running the `app.py` script:
+1. Start the Flask server by running the app.py script:
 
 `python app.py`
 

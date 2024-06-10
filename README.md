@@ -41,9 +41,4 @@ The server will start running on `http://127.0.0.1:5678`.
 
 Contributions to the Meshtastic Chat Interface are welcome! If you find any bugs, have feature requests, or want to contribute improvements, please open an issue or submit a pull request on the GitHub repository.
 
-## License
-
-[LICENSE](LICENSE)
-
-
 ![rocketgod_logo](https://github.com/RocketGod-git/shodanbot/assets/57732082/7929b554-0fba-4c2b-b22d-6772d23c4a18)

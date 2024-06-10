@@ -1,5 +1,5 @@
 # Meshtastic Web Chat Interface
-
+# --> Beta - work in progress <--
 The Meshtastic Chat Interface is a web-based application that allows you to communicate with Meshtastic devices using a user-friendly interface. With this application, you can select a COM port, connect to a Meshtastic device, view available channels, send messages, and monitor the serial communication.
 
 ## Prerequisites

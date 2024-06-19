@@ -1,296 +1,187 @@
-from flask import Flask, render_template, request, Response
-from flask import stream_with_context
+from flask import Flask, render_template, request, Response, stream_with_context
 
 import serial
 import serial.tools.list_ports
 
 import json
-import threading
-import queue as queue_module
 import logging
+import queue 
 
 from meshtastic.serial_interface import SerialInterface
-from meshtastic import portnums_pb2
-from meshtastic import clientonly_pb2
-from meshtastic import mesh_pb2
-
+from meshtastic import portnums_pb2, mesh_pb2
 from pubsub import pub
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-app.sse_queues = []
-
-serial_interface = None
-current_channel = None
+app.config['serial_interface'] = None
+app.config['sse_subscribers'] = []
 
 def list_serial_ports():
-    try:
-        ports = serial.tools.list_ports.comports()
-        return [port.device for port in ports]
-    except Exception as e:
-        logging.error(f'Error detecting COM ports: {str(e)}')
-        return []
+    return [port.device for port in serial.tools.list_ports.comports()]
 
-def open_serial_connection(port):
-    global serial_interface
+def connect_serial(port):
     try:
-        if serial_interface:
-            serial_interface.close()
-            logging.info("Closed existing serial connection.")
-        serial_interface = SerialInterface(port)
+        interface = SerialInterface(port)
+        interface.sendText("Connected to Meshtastic device")
         pub.subscribe(on_receive, "meshtastic.receive")
         pub.subscribe(on_connection, "meshtastic.connection.established")
-        logging.info(f"Successfully connected to {port}")
+        app.config['serial_interface'] = interface
+        logging.info(f"Connected to Meshtastic device on {port}")
         return True
     except Exception as e:
-        logging.error(f"Failed to connect to {port}: {str(e)}")
+        logging.error(f"Error connecting to Meshtastic device: {e}")
         return False
 
 def on_connection(interface, topic=pub.AUTO_TOPIC):
     logging.info("Connected to Meshtastic device")
-    # Perform any necessary actions upon connection
     interface.sendText("Connected to Meshtastic device")
     info = interface.getMyNodeInfo()
     logging.info(f"Connected to {info}")
-    
-    # Send channel information to web interface via server-sent events
-    radio_config = mesh_pb2.Config()
+
+    radio_config = mesh_pb2.RadioConfig()
     interface._getRadioConfig(radio_config)
     channels = radio_config.channel_settings
+
+    primary_channel = None
     for channel in channels:
-        channel_data = {
-            "index": channel.index,
-            "name": channel.name
+        channel_info = {
+            'index': channel.index,
+            'name': channel.settings.name
         }
-        sse_data = f"event: channel_info\ndata: {json.dumps(channel_data)}\n\n"
-        for queue in app.sse_queues:
-            queue.put(sse_data)
-            
+        if channel.role == mesh_pb2.Channel.Role.PRIMARY:
+            primary_channel = channel_info
+        else:
+            send_sse('channel_info', json.dumps(channel_info))
+
+    if primary_channel:
+        send_sse('primary_channel', json.dumps(primary_channel))
+        
 def on_receive(packet, interface):
     logging.debug(f"Received: {packet}")
-    # Handle received packet based on its type
-    if "decoded" in packet:
-        portnum = packet["decoded"]["portnum"]
-        if portnum == portnums_pb2.PortNum.TEXT_MESSAGE_APP:
-            handle_text_message(packet, interface)
-        elif portnum == portnums_pb2.PortNum.POSITION_APP:
-            handle_position_message(packet, interface)
-        elif portnum == portnums_pb2.PortNum.NODEINFO_APP:
-            handle_nodeinfo_message(packet, interface)
-        elif portnum == portnums_pb2.PortNum.TELEMETRY_APP:
-            handle_telemetry_message(packet, interface)
-        # Add more conditions for other packet types as needed
-        else:
-            logging.warning(f"Unhandled portnum: {portnum}")
+    decode_packet(packet, interface)
+
+def decode_packet(packet, interface, parent="MainPacket", filler="", filler_char=""):
+    if isinstance(packet, dict):
+        for key, value in packet.items():
+            if isinstance(value, dict):
+                decode_packet(value, interface, f"{parent}/{key}", filler, filler_char)
+            else:
+                logging.debug(f"{filler}{key}: {value}")
+                handle_packet_data(key, value, packet, interface)
     else:
-        logging.warning("Received packet without 'decoded' key")
+        logging.warning("Warning: Not a packet!")
 
-def handle_text_message(packet, interface):
-    # Handle text message packet
-    try:
-        text = packet["decoded"].get("text", "")
-        sender = packet.get("from", "Unknown")
-        logging.info(f"Received text message from {sender}: {text}")
-        # Prepare text message data for web interface
-        message_data = {
-            "sender": sender,
-            "text": text
-        }
-        # Send text message data to web interface via server-sent events
-        sse_data = f"event: text_message\ndata: {json.dumps(message_data)}\n\n"
-        for queue in app.sse_queues:
-            queue.put(sse_data)
-    except (KeyError, TypeError) as e:
-        logging.error(f"Error handling text message: {str(e)}")
+def handle_packet_data(key, value, packet, interface):
+    if key == "decoded":
+        decoded_data = packet["decoded"]
+        portnum = decoded_data.get("portnum")
+        
+        if portnum == portnums_pb2.PortNum.TEXT_MESSAGE_APP:
+            handle_text_message(decoded_data, interface)
+        elif portnum == portnums_pb2.PortNum.POSITION_APP:
+            handle_position_message(decoded_data, interface)
+        elif portnum == portnums_pb2.PortNum.NODEINFO_APP:
+            handle_nodeinfo_message(decoded_data, interface)
+        elif portnum == portnums_pb2.PortNum.TELEMETRY_APP:
+            handle_telemetry_message(decoded_data, interface)
 
-def handle_position_message(packet, interface):
-    # Handle position message packet
-    position = packet["decoded"]["position"]
-    sender = packet.get("from", "Unknown")
-    latitude = position.get("latitudeI", 0) / 1e7
-    longitude = position.get("longitudeI", 0) / 1e7
-    altitude = position.get("altitude", 0)
-    logging.info(f"Received position from {sender}: Lat: {latitude}, Lon: {longitude}, Alt: {altitude}")
-    # Perform any necessary actions with the received position data
-    interface.nodes[sender]["position"] = position
+def handle_text_message(decoded_data, interface):
+    text = decoded_data.get("text", "")
+    sender = decoded_data.get("from", "Unknown")
+    logging.info(f"Received text message from {sender}: {text}")
+    send_sse('text_message', json.dumps({'sender': sender, 'text': text}))
 
-def handle_nodeinfo_message(packet, interface):
-    # Handle nodeinfo message packet
-    nodeinfo = packet["decoded"]["user"]
-    sender = packet.get("from", "Unknown")
-    logging.info(f"Received nodeinfo from {sender}: {nodeinfo}")
-    
-    # Prepare user data for web interface
-    user_data = {
-        "sender": sender,
-        "id": nodeinfo.get("id", ""),
-        "longName": nodeinfo.get("longName", ""),
-        "shortName": nodeinfo.get("shortName", ""),
-        "macaddr": nodeinfo.get("macaddr", ""),
-        "hwModel": nodeinfo.get("hwModel", "")
-    }
-    
-    # Send user data to web interface via server-sent events
-    sse_data = f"event: user_data\ndata: {json.dumps(user_data)}\n\n"
-    for queue in app.sse_queues:
-        queue.put(sse_data)
-
-def handle_telemetry_message(packet, interface):
-    # Handle telemetry message packet
-    telemetry = packet["decoded"].get("telemetry", {})
-    sender = packet.get("from", "Unknown")
-    logging.info(f"Received telemetry from {sender}: {telemetry}")
-    
-    # Extract relevant telemetry data
-    battery_level = telemetry.get("deviceMetrics", {}).get("batteryLevel", 0)
-    voltage = telemetry.get("deviceMetrics", {}).get("voltage", 0.0)
-    channel_utilization = telemetry.get("deviceMetrics", {}).get("channelUtilization", 0.0)
-    air_util_tx = telemetry.get("deviceMetrics", {}).get("airUtilTx", 0.0)
-    uptime_seconds = telemetry.get("deviceMetrics", {}).get("uptimeSeconds", 0)
-    
-    # Prepare telemetry data for web interface
-    telemetry_data = {
-        "sender": sender,
-        "batteryLevel": battery_level,
-        "voltage": voltage,
-        "channelUtilization": channel_utilization,
-        "airUtilTx": air_util_tx,
-        "uptimeSeconds": uptime_seconds
-    }
-    
-    # Send telemetry data to web interface via server-sent events
-    sse_data = f"event: telemetry_data\ndata: {json.dumps(telemetry_data)}\n\n"
-    for queue in app.sse_queues:
-        queue.put(sse_data)
-
-def handle_position_message(packet, interface):
-    # Handle position message packet
-    position = packet["decoded"].get("position", {})
-    sender = packet.get("from", "Unknown")
+def handle_position_message(decoded_data, interface):
+    position = decoded_data.get("position", {})
+    sender = decoded_data.get("from", "Unknown")
     latitude = position.get("latitude", 0.0)
     longitude = position.get("longitude", 0.0)
     altitude = position.get("altitude", 0)
     logging.info(f"Received position from {sender}: Lat: {latitude}, Lon: {longitude}, Alt: {altitude}")
-    
-    # Update node position in the interface
-    interface.nodes[sender]["position"] = position
-    
-    # Prepare position data for web interface
-    position_data = {
-        "sender": sender,
-        "latitude": latitude,
-        "longitude": longitude,
-        "altitude": altitude
-    }
-    
-    # Send position data to web interface via server-sent events
-    sse_data = f"event: position_data\ndata: {json.dumps(position_data)}\n\n"
+    send_sse('position_data', json.dumps({'sender': sender, 'latitude': latitude, 'longitude': longitude, 'altitude': altitude}))
+
+def handle_nodeinfo_message(decoded_data, interface):
+    nodeinfo = decoded_data.get("user", {})
+    sender = decoded_data.get("from", "Unknown")
+    logging.info(f"Received nodeinfo from {sender}: {nodeinfo}")
+    send_sse('user_data', json.dumps({
+        'sender': sender,
+        'id': nodeinfo.get("id", ""),
+        'longName': nodeinfo.get("longName", ""),
+        'shortName': nodeinfo.get("shortName", ""),
+        'macaddr': nodeinfo.get("macaddr", ""),
+        'hwModel': nodeinfo.get("hwModel", "")
+    }))
+
+def handle_telemetry_message(decoded_data, interface):
+    telemetry = decoded_data.get("telemetry", {})
+    sender = decoded_data.get("from", "Unknown")
+    logging.info(f"Received telemetry from {sender}: {telemetry}")
+    device_metrics = telemetry.get("deviceMetrics", {})
+    send_sse('telemetry_data', json.dumps({
+        'sender': sender,
+        'batteryLevel': device_metrics.get("batteryLevel", 0),
+        'voltage': device_metrics.get("voltage", 0.0),
+        'channelUtilization': device_metrics.get("channelUtilization", 0.0),
+        'airUtilTx': device_metrics.get("airUtilTx", 0.0),
+        'uptimeSeconds': device_metrics.get("uptimeSeconds", 0)
+    }))
+
+def send_sse(event, data):
     for queue in app.sse_queues:
-        queue.put(sse_data)
-
-def handle_command(command, sender, interface):
-    if command == "!info":
-        info = interface.getMyNodeInfo()
-        response = f"Device info: {info}"
-        interface.sendText(response, destinationId=sender)
-    elif command.startswith("!send"):
-        _, dest, message = command.split(" ", 2)
-        interface.sendText(message, destinationId=dest)
-    elif command.startswith("!setprofile"):
-        _, profile_name = command.split(" ", 1)
-        set_device_profile(profile_name, interface)
-    # Add more command handlers as needed
-    else:
-        logging.warning(f"Unknown command: {command}")
-
-def set_device_profile(profile_name, interface):
-    # Create a new DeviceProfile message
-    profile = clientonly_pb2.DeviceProfile()
-    
-    # Set the profile fields based on the profile name
-    if profile_name == "default":
-        profile.long_name = "Default Profile"
-        profile.short_name = "DEFAULT"
-        profile.channel_url = ""
-        # Set other profile fields as needed
-    elif profile_name == "custom":
-        profile.long_name = "Custom Profile"
-        profile.short_name = "CUSTOM"
-        profile.channel_url = "https://example.com/custom_channel.json"
-        # Set other profile fields as needed
-    else:
-        logging.warning(f"Unknown profile name: {profile_name}")
-        return
-    
-    # Set the device configuration
-    interface.sendSimplePacket(profile.SerializeToString(), portnums_pb2.PortNum.ADMIN_APP, localOnly=True)
-    logging.info(f"Device profile set to {profile_name}")
-
+        queue.put(f"event: {event}\ndata: {data}\n\n")
 
 @app.route('/')
 def index():
     ports = list_serial_ports()
-    return render_template('index.html', ports=ports, connected=serial_interface is not None)
+    return render_template('index.html', ports=ports)
 
 @app.route('/connect', methods=['POST'])
 def connect():
     port = request.form['port']
-    if open_serial_connection(port):
-        return {'status': 'connected', 'port': port}
+    if connect_serial(port):
+        return {'status': 'connected', 'message': f'Connected to {port}'}
     else:
-        return {'status': 'error', 'message': 'Failed to connect to port'}
-    
+        return {'status': 'error', 'message': 'Failed to connect'}
+
 @app.route('/disconnect', methods=['POST'])
 def disconnect():
-    if serial_interface:
-        try:
-            serial_interface.close()
-            logging.info('Serial connection closed')
-            return {'status': 'disconnected'}
-        except Exception as e:
-            logging.error(f"Error closing serial connection: {str(e)}")
-            return {'status': 'error', 'message': 'Failed to close serial connection'}
+    interface = app.config['serial_interface']
+    if interface:
+        interface.close()
+        app.config['serial_interface'] = None
+        logging.info("Disconnected from Meshtastic device")
+        return {'status': 'disconnected'}
     else:
-        return {'status': 'error', 'message': 'No serial connection'}
+        return {'status': 'error', 'message': 'Not connected'}
 
 @app.route('/send_message', methods=['POST'])
 def send_message():
     message = request.form['message']
-    channel = int(request.form['channel'])
-    if serial_interface:
-        try:
-            serial_interface.sendText(message, wantAck=True, channelIndex=channel)
-            logging.info(f"Message sent on channel {channel}: {message}")
-            return {'status': 'sent', 'message': message}
-        except Exception as e:
-            logging.error(f"Error sending message: {str(e)}")
-            return {'status': 'error', 'message': 'Failed to send message'}
+    channel_index = int(request.form['channel'])
+    interface = app.config['serial_interface']
+    if interface:
+        interface.sendText(message, channelIndex=channel_index)
+        logging.info(f"Sent message: {message} on channel {channel_index}")
+        return {'status': 'sent'}
     else:
-        return {'status': 'error', 'message': 'No serial connection'}
-    
+        return {'status': 'error', 'message': 'Not connected'}
+
 @app.route('/stream')
 def stream():
     def event_stream():
-        event_queue = queue_module.Queue()
-        app.sse_queues.append(event_queue)
+        subscriber_queue = app.config['sse_subscribers']
+        subscriber_queue_item = queue.Queue()  #
+        subscriber_queue.append(subscriber_queue_item)
         try:
             while True:
-                data = event_queue.get()
-                yield data
-        except GeneratorExit:
-            app.sse_queues.remove(event_queue)
+                data = subscriber_queue_item.get()
+                yield f"data: {data}\n\n"
+        finally:
+            subscriber_queue.remove(subscriber_queue_item)
 
-    return Response(stream_with_context(event_stream()), mimetype='text/event-stream')    
+    return Response(event_stream(), mimetype='text/event-stream')
 
 if __name__ == '__main__':
-    try:
-        available_ports = list_serial_ports()
-        if available_ports:
-            logging.info(f"Available ports: {available_ports}")
-        else:
-            logging.warning("No COM ports detected at startup.")
-        
-        app.run(host='127.0.0.1', port=5678)
-    except Exception as e:
-        logging.critical(f"Unhandled exception occurred: {str(e)}")
+    app.run()

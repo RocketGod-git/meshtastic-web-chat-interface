@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Chat with Meshtastic Device</title>
+    <title>Meshtastic Web Interface</title>
     
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
     
@@ -12,143 +12,142 @@
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
 </head>
-<body data-connected="{{ connected }}">
-    <div class="modal" tabindex="-1" role="dialog" id="portModal">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Select COM Port</h5>
-                </div>
-                <div class="modal-body">
-                    <label for="comPort">COM Port</label>
-                    <select id="comPort" class="form-control">
+<body>
+    <div class="container">
+        <h1>Meshtastic Web Interface</h1>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="form-group">
+                    <label for="portSelect">Select COM Port:</label>
+                    <select class="form-control" id="portSelect">
                         {% for port in ports %}
                             <option value="{{ port }}">{{ port }}</option>
                         {% endfor %}
                     </select>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" onclick="connectToPort()">Connect</button>
+                <button class="btn btn-primary" id="connectBtn">Connect</button>
+                <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
+            </div>
+            <div class="col-md-8">
+                <div class="form-group">
+                    <label for="messageInput">Message:</label>
+                    <input type="text" class="form-control" id="messageInput" placeholder="Enter message">
                 </div>
+                <div class="form-group">
+                    <label for="channelSelect">Select Channel:</label>
+                    <select class="form-control" id="channelSelect"></select>
+                </div>
+                <button class="btn btn-success" id="sendBtn" disabled>Send Message</button>
             </div>
         </div>
-    </div>
-
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-3" id="channelList">
-                <h3>Channels</h3>
-                <ul class="list-group" id="channels">
-                    {% for channel in channels %}
-                        <li class="list-group-item" onclick="selectChannel({{ channel.index }})">{{ channel.name }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            <div class="col-9">
-                <h1>Meshtastic Chat Interface</h1>
-                <div id="chatArea">
-                    <label for="message">Message:</label>
-                    <input type="text" id="message" class="form-control" placeholder="Enter message">
-                    <button onclick="sendMessage()" class="btn btn-success">Send Message</button>
-                    <h2>Messages</h2>
-                    <div id="messagesWindow" class="form-control" style="height: 200px; overflow-y: scroll;"></div>
-                </div>
-                <h2>Serial Monitor</h2>
-                <textarea id="serialMonitor" class="form-control" rows="10" readonly></textarea>
-                <button onclick="clearSerialMonitor()" class="btn btn-secondary mt-2">Clear Serial Monitor</button>
-            </div>
-        </div>
+        <hr>
+        <h2>Received Messages</h2>
+        <div id="messagesContainer"></div>
+        <hr>
+        <h2>Device Information</h2>
+        <div id="deviceInfo"></div>
+        <hr>
+        <h2>Node Information</h2>
+        <div id="nodeInfo"></div>
     </div>
 
     <script>
-        var currentChannel = null;
-
         $(document).ready(function() {
-            var connected = $('body').data('connected') === 'True';
-            if (!connected) {
-                console.log("Opening port selection modal.");
-                $('#portModal').modal('show');
-            } else {
-                console.log("Already connected to serial port.");
-                startEventSource();
-            }
-        });
+            var eventSource = null;
+            var primaryChannel = null;
 
-        function connectToPort() {
-            var port = $('#comPort').val();
-            console.log("Port selected: " + port);
-            $.post('/connect', { port: port }, function(response) {
-                if (response.status === 'connected') {
-                    console.log('Connected to ' + response.port);
-                    alert('Connected to ' + response.port);
-                    $('#portModal').modal('hide');
-                    startEventSource();
-                } else {
-                    console.error('Error: ' + response.message);
-                    alert('Error: ' + response.message);
-                }
-            });
-        }
-
-        function startEventSource() {
-            var source = new EventSource('/stream');
-            source.onmessage = function(event) {
-                var serialMonitor = document.getElementById('serialMonitor');
-                serialMonitor.value += event.data + '\n';
-                serialMonitor.scrollTop = serialMonitor.scrollHeight;
-            };
-            source.addEventListener('channel_info', function(event) {
-                var channelData = JSON.parse(event.data);
-                var channelList = document.getElementById('channels');
-                var listItem = document.createElement('li');
-                listItem.textContent = channelData.name;
-                listItem.className = 'list-group-item';
-                listItem.onclick = function() { selectChannel(channelData.index); };
-                channelList.appendChild(listItem);
-            });
-            source.addEventListener('receive_message', function(event) {
-                var messageData = JSON.parse(event.data);
-                console.log('Message received on channel ' + messageData.channel + ': ' + messageData.message);
-                if (messageData.channel === currentChannel) {
-                    var messagesWindow = document.getElementById('messagesWindow');
-                    messagesWindow.innerHTML += '<p>' + messageData.message + '</p>';
-                    messagesWindow.scrollTop = messagesWindow.scrollHeight;
-                }
-            });
-        }
-
-        function sendMessage() {
-            var message = $('#message').val();
-            console.log("Sending message on channel " + currentChannel + ": " + message);
-            if (currentChannel !== null && message.trim() !== '') {
-                $.post('/send_message', { message: message, channel: currentChannel }, function(response) {
-                    if (response.status === 'sent') {
-                        $('#message').val('');
+            $('#connectBtn').click(function() {
+                var selectedPort = $('#portSelect').val();
+                $.post('/connect', { port: selectedPort }, function(response) {
+                    if (response.status === 'connected') {
+                        $('#connectBtn').prop('disabled', true);
+                        $('#disconnectBtn').prop('disabled', false);
+                        $('#sendBtn').prop('disabled', false);
+                        startEventSource();
                     } else {
-                        console.error('Error: ' + response.message);
-                        alert('Error: ' + response.message);
+                        alert('Failed to connect: ' + response.message);
                     }
                 });
-            } else {
-                alert('No channel selected or message is empty!');
+            });
+
+            $('#disconnectBtn').click(function() {
+                $.post('/disconnect', function(response) {
+                    if (response.status === 'disconnected') {
+                        $('#connectBtn').prop('disabled', false);
+                        $('#disconnectBtn').prop('disabled', true);
+                        $('#sendBtn').prop('disabled', true);
+                        stopEventSource();
+                    } else {
+                        alert('Failed to disconnect: ' + response.message);
+                    }
+                });
+            });
+
+            $('#sendBtn').click(function() {
+                var message = $('#messageInput').val();
+                var channel = $('#channelSelect').val() || primaryChannel;
+                $.post('/send_message', { message: message, channel: channel }, function(response) {
+                    if (response.status === 'sent') {
+                        $('#messageInput').val('');
+                    } else {
+                        alert('Failed to send message: ' + response.message);
+                    }
+                });
+            });
+
+            function startEventSource() {
+                eventSource = new EventSource('/stream');
+
+                eventSource.addEventListener('primary_channel', function(event) {
+                    var channelData = JSON.parse(event.data);
+                    primaryChannel = channelData.index;
+                    var channelSelect = $('#channelSelect');
+                    channelSelect.append($('<option>', {
+                        value: channelData.index,
+                        text: channelData.name + ' (Primary)'
+                    }));
+                });
+
+                eventSource.addEventListener('channel_info', function(event) {
+                    var channelData = JSON.parse(event.data);
+                    var channelSelect = $('#channelSelect');
+                    channelSelect.append($('<option>', {
+                        value: channelData.index,
+                        text: channelData.name
+                    }));
+                });
+
+                eventSource.addEventListener('text_message', function(event) {
+                    var messageData = JSON.parse(event.data);
+                    var messagesContainer = $('#messagesContainer');
+                    messagesContainer.append('<p><strong>From:</strong> ' + messageData.sender + '<br><strong>Message:</strong> ' + messageData.text + '</p><hr>');
+                });
+
+                eventSource.addEventListener('user_data', function(event) {
+                    var userData = JSON.parse(event.data);
+                    var deviceInfo = $('#deviceInfo');
+                    deviceInfo.html('<p><strong>Device ID:</strong> ' + userData.id + '<br><strong>Long Name:</strong> ' + userData.longName + '<br><strong>Short Name:</strong> ' + userData.shortName + '<br><strong>MAC Address:</strong> ' + userData.macaddr + '<br><strong>Hardware Model:</strong> ' + userData.hwModel + '</p>');
+                });
+
+                eventSource.addEventListener('position_data', function(event) {
+                    var positionData = JSON.parse(event.data);
+                    var nodeInfo = $('#nodeInfo');
+                    nodeInfo.html('<p><strong>Sender:</strong> ' + positionData.sender + '<br><strong>Latitude:</strong> ' + positionData.latitude + '<br><strong>Longitude:</strong> ' + positionData.longitude + '<br><strong>Altitude:</strong> ' + positionData.altitude + '</p>');
+                });
+
+                eventSource.addEventListener('telemetry_data', function(event) {
+                    var telemetryData = JSON.parse(event.data);
+                    var deviceInfo = $('#deviceInfo');
+                    deviceInfo.append('<p><strong>Battery Level:</strong> ' + telemetryData.batteryLevel + '<br><strong>Voltage:</strong> ' + telemetryData.voltage + '<br><strong>Channel Utilization:</strong> ' + telemetryData.channelUtilization + '<br><strong>Air Utilization TX:</strong> ' + telemetryData.airUtilTx + '<br><strong>Uptime Seconds:</strong> ' + telemetryData.uptimeSeconds + '</p>');
+                });
             }
-        }
 
-        function selectChannel(channel) {
-            console.log("Channel selected: " + channel);
-            currentChannel = channel;
-            var messagesWindow = document.getElementById('messagesWindow');
-            messagesWindow.innerHTML = '';
-            alert('Channel ' + channel + ' selected');
-        }
-
-        function clearSerialMonitor() {
-            var serialMonitor = document.getElementById('serialMonitor');
-            serialMonitor.value = '';
-        }
-
-        $(window).on('beforeunload', function() {
-            $.post('/disconnect');
+            function stopEventSource() {
+                if (eventSource !== null) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+            }
         });
     </script>
 </body>

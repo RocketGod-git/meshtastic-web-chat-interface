@@ -1,187 +1,355 @@
-from flask import Flask, render_template, request, Response, stream_with_context
-
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, emit
+from flask_cors import CORS
 import serial
 import serial.tools.list_ports
-
 import json
 import logging
-import queue 
-
+import meshtastic
 from meshtastic.serial_interface import SerialInterface
-from meshtastic import portnums_pb2, mesh_pb2
+from meshtastic import mesh_pb2, portnums_pb2, telemetry_pb2
 from pubsub import pub
+import time
+from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-app.config['serial_interface'] = None
-app.config['sse_subscribers'] = []
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+available_channels = []
+found_nodes = {}
+received_messages = []
+app.config['messages'] = {}
 
 def list_serial_ports():
-    return [port.device for port in serial.tools.list_ports.comports()]
+    try:
+        return [port.device for port in serial.tools.list_ports.comports()]
+    except Exception as e:
+        logging.error(f"Error listing serial ports: {e}")
+        return []
 
 def connect_serial(port):
     try:
         interface = SerialInterface(port)
-        interface.sendText("Connected to Meshtastic device")
+        logging.info(f"Interface created: {interface}")
+        logging.info(f"Interface type: {type(interface)}")
+        logging.info(f"Interface attributes: {dir(interface)}")
+
+        # interface.sendText("Connected to Meshtastic device")
         pub.subscribe(on_receive, "meshtastic.receive")
         pub.subscribe(on_connection, "meshtastic.connection.established")
-        app.config['serial_interface'] = interface
+        
+        socketio.emit('serial_connected', {'port': port})
         logging.info(f"Connected to Meshtastic device on {port}")
-        return True
+        return interface
     except Exception as e:
         logging.error(f"Error connecting to Meshtastic device: {e}")
-        return False
+        socketio.emit('serial_error', {'message': str(e)})
+        return None
 
 def on_connection(interface, topic=pub.AUTO_TOPIC):
+    global available_channels, received_messages
     logging.info("Connected to Meshtastic device")
-    interface.sendText("Connected to Meshtastic device")
-    info = interface.getMyNodeInfo()
-    logging.info(f"Connected to {info}")
+    try:
+        info = interface.getMyNodeInfo()
+        logging.info(f"Connected to {info}")
 
-    radio_config = mesh_pb2.RadioConfig()
-    interface._getRadioConfig(radio_config)
-    channels = radio_config.channel_settings
+        channels = interface.localNode.channels
 
-    primary_channel = None
-    for channel in channels:
-        channel_info = {
-            'index': channel.index,
-            'name': channel.settings.name
-        }
-        if channel.role == mesh_pb2.Channel.Role.PRIMARY:
-            primary_channel = channel_info
-        else:
-            send_sse('channel_info', json.dumps(channel_info))
+        available_channels = []
+        for idx, channel in enumerate(channels):
+            channel_info = {
+                'index': idx,
+                'name': channel.settings.name or f'Channel {idx}',
+                'role': channel.role
+            }
+            available_channels.append(channel_info)
 
-    if primary_channel:
-        send_sse('primary_channel', json.dumps(primary_channel))
+        logging.info(f"Available channels: {available_channels}")
+        socketio.emit('channel_list', {'channels': available_channels})
+
+        nodes = interface.nodes
+        for node_id, node_data in nodes.items():
+            update_node(node_id, node_data)
+
+        socketio.emit('all_messages', {'messages': received_messages})
+
+    except Exception as e:
+        logging.error(f"Error in on_connection: {e}")
+        logging.exception("Stack trace:")
+        default_channel = {'index': 0, 'name': 'Default', 'role': 'PRIMARY'}
+        available_channels = [default_channel]
+        socketio.emit('channel_list', {'channels': available_channels})
         
+    except Exception as e:
+        logging.error(f"Error in on_connection: {e}")
+        logging.exception("Stack trace:")
+        default_channel = {'index': 0, 'name': 'Default', 'role': 'PRIMARY'}
+        available_channels = [default_channel]
+        socketio.emit('channel_list', {'channels': available_channels})
+
 def on_receive(packet, interface):
-    logging.debug(f"Received: {packet}")
-    decode_packet(packet, interface)
-
-def decode_packet(packet, interface, parent="MainPacket", filler="", filler_char=""):
-    if isinstance(packet, dict):
-        for key, value in packet.items():
-            if isinstance(value, dict):
-                decode_packet(value, interface, f"{parent}/{key}", filler, filler_char)
+    logging.debug(f"Raw received packet: {packet}")
+    try:
+        if 'decoded' in packet:
+            portnum = packet['decoded'].get('portnum')
+            if portnum == 'TEXT_MESSAGE_APP':
+                handle_text_message(packet['decoded'], packet)
+            elif portnum == 'NODEINFO_APP':
+                handle_nodeinfo_message(packet['decoded'], packet)
+            elif portnum == 'POSITION_APP':
+                handle_position_message(packet['decoded'], packet)
+            elif portnum == 'TELEMETRY_APP':
+                handle_telemetry_message(packet['decoded'], packet)
             else:
-                logging.debug(f"{filler}{key}: {value}")
-                handle_packet_data(key, value, packet, interface)
-    else:
-        logging.warning("Warning: Not a packet!")
-
-def handle_packet_data(key, value, packet, interface):
-    if key == "decoded":
-        decoded_data = packet["decoded"]
-        portnum = decoded_data.get("portnum")
+                logging.warning(f"Unhandled portnum: {portnum}")
+        elif 'encrypted' in packet:
+            logging.info("Received encrypted packet")
+        else:
+            logging.warning("Received packet with unknown format")
         
+        update_node(packet.get('fromId'), packet)
+    except Exception as e:
+        logging.error(f"Unexpected error in on_receive: {e}")
+        logging.exception("Stack trace:")
+
+def update_node(node_id, data):
+    global found_nodes
+    if node_id not in found_nodes:
+        found_nodes[node_id] = {}
+    
+    node_info = {
+        'num': node_id,
+        'user': {
+            'id': data.get('fromId') or data.get('user', {}).get('id'),
+            'longName': data.get('user', {}).get('longName'),
+            'shortName': data.get('user', {}).get('shortName'),
+            'macaddr': data.get('user', {}).get('macaddr'),
+            'hwModel': data.get('user', {}).get('hwModel'),
+            'role': data.get('user', {}).get('role'),
+            'isLicensed': data.get('user', {}).get('isLicensed')
+        },
+        'position': data.get('position', {}),
+        'snr': data.get('rxSnr') or data.get('snr'),
+        'lastHeard': data.get('rxTime') or data.get('lastHeard'),
+        'deviceMetrics': data.get('deviceMetrics', {}),
+        'hopsAway': data.get('hopStart') or data.get('hopsAway')
+    }
+    
+    found_nodes[node_id] = merge_dicts(found_nodes[node_id], node_info)
+    
+    logging.info(f"Node updated: {found_nodes[node_id]}")
+    socketio.emit('node_updated', found_nodes[node_id])
+
+def merge_dicts(dict1, dict2):
+    result = dict1.copy()
+    for key, value in dict2.items():
+        if isinstance(value, dict):
+            result[key] = merge_dicts(result.get(key, {}), value)
+        elif value is not None:
+            result[key] = value
+    return result
+
+def handle_decoded_packet(decoded_data, packet, interface):
+    try:
+        portnum = decoded_data.get("portnum")
+
         if portnum == portnums_pb2.PortNum.TEXT_MESSAGE_APP:
-            handle_text_message(decoded_data, interface)
-        elif portnum == portnums_pb2.PortNum.POSITION_APP:
-            handle_position_message(decoded_data, interface)
+            handle_text_message(decoded_data, packet)
         elif portnum == portnums_pb2.PortNum.NODEINFO_APP:
-            handle_nodeinfo_message(decoded_data, interface)
+            handle_nodeinfo_message(decoded_data, packet)
         elif portnum == portnums_pb2.PortNum.TELEMETRY_APP:
-            handle_telemetry_message(decoded_data, interface)
+            handle_telemetry_message(decoded_data, packet)
+        else:
+            logging.warning(f"Unhandled portnum: {portnum}")
+    except Exception as e:
+        logging.error(f"Error in handle_decoded_packet: {e}")
+        logging.exception("Stack trace:")
 
-def handle_text_message(decoded_data, interface):
-    text = decoded_data.get("text", "")
-    sender = decoded_data.get("from", "Unknown")
-    logging.info(f"Received text message from {sender}: {text}")
-    send_sse('text_message', json.dumps({'sender': sender, 'text': text}))
+def handle_text_message(decoded_data, packet):
+    try:
+        logging.info(f"Raw text message packet: {packet}")
 
-def handle_position_message(decoded_data, interface):
-    position = decoded_data.get("position", {})
-    sender = decoded_data.get("from", "Unknown")
-    latitude = position.get("latitude", 0.0)
-    longitude = position.get("longitude", 0.0)
-    altitude = position.get("altitude", 0)
-    logging.info(f"Received position from {sender}: Lat: {latitude}, Lon: {longitude}, Alt: {altitude}")
-    send_sse('position_data', json.dumps({'sender': sender, 'latitude': latitude, 'longitude': longitude, 'altitude': altitude}))
+        sender_id = packet.get('fromId', 'Unknown')
+        sender_node = found_nodes.get(sender_id, {})
+        sender_name = sender_node.get('user', {}).get('longName') or sender_node.get('user', {}).get('shortName') or sender_id
 
-def handle_nodeinfo_message(decoded_data, interface):
-    nodeinfo = decoded_data.get("user", {})
-    sender = decoded_data.get("from", "Unknown")
-    logging.info(f"Received nodeinfo from {sender}: {nodeinfo}")
-    send_sse('user_data', json.dumps({
-        'sender': sender,
-        'id': nodeinfo.get("id", ""),
-        'longName': nodeinfo.get("longName", ""),
-        'shortName': nodeinfo.get("shortName", ""),
-        'macaddr': nodeinfo.get("macaddr", ""),
-        'hwModel': nodeinfo.get("hwModel", "")
-    }))
+        message = {
+            'sender': sender_name,
+            'text': decoded_data.get('text', ''),
+            'channel': packet.get('channel', 0),  
+            'timestamp': packet.get('rxTime', int(time.time()))
+        }
 
-def handle_telemetry_message(decoded_data, interface):
-    telemetry = decoded_data.get("telemetry", {})
-    sender = decoded_data.get("from", "Unknown")
-    logging.info(f"Received telemetry from {sender}: {telemetry}")
-    device_metrics = telemetry.get("deviceMetrics", {})
-    send_sse('telemetry_data', json.dumps({
-        'sender': sender,
-        'batteryLevel': device_metrics.get("batteryLevel", 0),
-        'voltage': device_metrics.get("voltage", 0.0),
-        'channelUtilization': device_metrics.get("channelUtilization", 0.0),
-        'airUtilTx': device_metrics.get("airUtilTx", 0.0),
-        'uptimeSeconds': device_metrics.get("uptimeSeconds", 0)
-    }))
+        display_message = f"{sender_name}\n{message['text']}\n{datetime.fromtimestamp(message['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}"
 
-def send_sse(event, data):
-    for queue in app.sse_queues:
-        queue.put(f"event: {event}\ndata: {data}\n\n")
+        received_messages.append(message)
+        logging.info(f"New text message received: {display_message}")
+        socketio.emit('new_message', {'raw_message': message, 'formatted_message': display_message})
+    except Exception as e:
+        logging.error(f"Error in handle_text_message: {e}")
+        logging.exception("Stack trace:")
+
+def handle_position_message(decoded_data, packet):
+    try:
+        position = decoded_data.get('position', {})
+        position_data = {
+            'sender': packet.get('fromId', 'Unknown'),
+            'latitude': position.get('latitude', 0),
+            'longitude': position.get('longitude', 0),
+            'altitude': position.get('altitude', 0),
+            'timestamp': packet.get('rxTime', 0)
+        }
+        logging.info(f"Position update: {position_data}")
+        socketio.emit('position_update', position_data)
+    except Exception as e:
+        logging.error(f"Error in handle_position_message: {e}")
+        logging.exception("Stack trace:")
+
+def handle_nodeinfo_message(decoded_data, packet):
+    try:
+        payload = mesh_pb2.User()
+        payload.ParseFromString(decoded_data.get('payload'))
+        node_info = {
+            'user': {
+                'id': payload.id,
+                'longName': payload.long_name,
+                'shortName': payload.short_name,
+                'macaddr': payload.macaddr.hex(),
+                'hwModel': payload.hw_model,
+                'isLicensed': payload.is_licensed
+            },
+            'num': packet.get('fromId') or payload.id,  
+            'snr': packet.get('rxSnr'),
+            'lastHeard': packet.get('rxTime'),
+            'hopsAway': packet.get('hopStart')
+        }
+        
+        if hasattr(payload, 'latitude') and hasattr(payload, 'longitude'):
+            node_info['position'] = {
+                'latitude': payload.latitude,
+                'longitude': payload.longitude,
+                'altitude': payload.altitude if hasattr(payload, 'altitude') else None,
+                'time': payload.last_heard if hasattr(payload, 'last_heard') else None
+            }
+        
+        if hasattr(payload, 'battery_level') or hasattr(payload, 'voltage'):
+            node_info['deviceMetrics'] = {
+                'batteryLevel': payload.battery_level if hasattr(payload, 'battery_level') else None,
+                'voltage': payload.voltage if hasattr(payload, 'voltage') else None
+            }
+
+        update_node(node_info['num'], node_info)
+        
+        logging.info(f"Node info received for {payload.id}: {node_info}")
+    except Exception as e:
+        logging.error(f"Error in handle_nodeinfo_message: {e}")
+        logging.exception("Stack trace:")
+
+def handle_telemetry_message(decoded_data, packet):
+    try:
+        payload = telemetry_pb2.Telemetry()
+        payload.ParseFromString(decoded_data.get('payload'))
+        telemetry_data = {
+            'time': payload.time,
+            'deviceMetrics': {
+                'batteryLevel': payload.device_metrics.battery_level,
+                'voltage': payload.device_metrics.voltage,
+                'channelUtilization': payload.device_metrics.channel_utilization,
+                'airUtilTx': payload.device_metrics.air_util_tx,
+                'uptimeSeconds': payload.device_metrics.uptime_seconds
+            }
+        }
+        update_node(packet.get('fromId'), {'telemetry': telemetry_data})
+    except Exception as e:
+        logging.error(f"Error in handle_telemetry_message: {e}")
+        logging.exception("Stack trace:")
 
 @app.route('/')
 def index():
-    ports = list_serial_ports()
-    return render_template('index.html', ports=ports)
+    try:
+        ports = list_serial_ports()
+        return render_template('index.html', ports=ports, channels=available_channels, nodes=found_nodes)
+    except Exception as e:
+        logging.error(f"Error in index route: {e}")
+        logging.exception("Stack trace:")
+        return "An error occurred", 500
 
-@app.route('/connect', methods=['POST'])
-def connect():
-    port = request.form['port']
-    if connect_serial(port):
-        return {'status': 'connected', 'message': f'Connected to {port}'}
-    else:
-        return {'status': 'error', 'message': 'Failed to connect'}
+@socketio.on('connect')
+def handle_connect():
+    logging.info("WebSocket client connected")
 
-@app.route('/disconnect', methods=['POST'])
-def disconnect():
-    interface = app.config['serial_interface']
-    if interface:
-        interface.close()
-        app.config['serial_interface'] = None
-        logging.info("Disconnected from Meshtastic device")
-        return {'status': 'disconnected'}
-    else:
-        return {'status': 'error', 'message': 'Not connected'}
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info("WebSocket client disconnected")
 
-@app.route('/send_message', methods=['POST'])
-def send_message():
-    message = request.form['message']
-    channel_index = int(request.form['channel'])
-    interface = app.config['serial_interface']
-    if interface:
-        interface.sendText(message, channelIndex=channel_index)
-        logging.info(f"Sent message: {message} on channel {channel_index}")
-        return {'status': 'sent'}
-    else:
-        return {'status': 'error', 'message': 'Not connected'}
+@socketio.on('connect_serial')
+def handle_connect_serial(data):
+    try:
+        port = data.get('port')
+        interface = connect_serial(port)
+        if interface:
+            app.config['serial_interface'] = interface
+            on_connection(interface)
+        else:
+            socketio.emit('serial_error', {'message': 'Failed to connect'})
+    except Exception as e:
+        logging.error(f"Error in connect_serial: {e}")
+        logging.exception("Stack trace:")
+        socketio.emit('serial_error', {'message': str(e)})
 
-@app.route('/stream')
-def stream():
-    def event_stream():
-        subscriber_queue = app.config['sse_subscribers']
-        subscriber_queue_item = queue.Queue()  #
-        subscriber_queue.append(subscriber_queue_item)
-        try:
-            while True:
-                data = subscriber_queue_item.get()
-                yield f"data: {data}\n\n"
-        finally:
-            subscriber_queue.remove(subscriber_queue_item)
+@socketio.on('disconnect_serial')
+def handle_disconnect_serial():
+    try:
+        interface = app.config.get('serial_interface')
+        if interface:
+            interface.close()
+            app.config['serial_interface'] = None
+            logging.info("Disconnected from Meshtastic device")
+            socketio.emit('serial_disconnected')
+        else:
+            socketio.emit('serial_error', {'message': 'Not connected'})
+    except Exception as e:
+        logging.error(f"Error in disconnect_serial: {e}")
+        logging.exception("Stack trace:")
+        socketio.emit('serial_error', {'message': str(e)})
 
-    return Response(event_stream(), mimetype='text/event-stream')
+@socketio.on('send_message')
+def handle_send_message(data):
+    try:
+        message = data.get('message')
+        channel_index = data.get('channel', 0)
+        interface = app.config.get('serial_interface')
+        if interface:
+            interface.sendText(message, channelIndex=channel_index)
+            logging.info(f"Sent message: {message} on channel {channel_index}")
+            
+            sent_message = {
+                'sender': 'You',  
+                'text': message,
+                'channel': channel_index,
+                'timestamp': int(time.time())
+            }
+            
+            if 'messages' not in app.config:
+                app.config['messages'] = {}
+            
+            if channel_index not in app.config['messages']:
+                app.config['messages'][channel_index] = []
+            app.config['messages'][channel_index].append(sent_message)
+            
+            socketio.emit('new_message', {'raw_message': sent_message})
+            logging.debug(f"Emitted new_message event for sent message: {sent_message}")
+            
+            socketio.emit('message_sent', {'status': 'success'})
+        else:
+            socketio.emit('serial_error', {'message': 'Not connected'})
+    except Exception as e:
+        logging.error(f"Error in send_message: {e}")
+        logging.exception("Stack trace:")
+        socketio.emit('serial_error', {'message': str(e)})
 
 if __name__ == '__main__':
-    app.run()
+    socketio.run(app, port=5678)

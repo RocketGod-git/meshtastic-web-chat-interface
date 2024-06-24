@@ -11,6 +11,7 @@ from meshtastic import mesh_pb2, portnums_pb2, telemetry_pb2
 from pubsub import pub
 import time
 from datetime import datetime
+import asyncio
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -51,6 +52,8 @@ def connect_serial(port):
 
 def on_connection(interface, topic=pub.AUTO_TOPIC):
     global available_channels, received_messages
+    pub.subscribe(on_receive, "meshtastic.receive")
+    pub.subscribe(on_connection, "meshtastic.connection.established")
     logging.info("Connected to Meshtastic device")
     try:
         info = interface.getMyNodeInfo()
@@ -103,8 +106,12 @@ def on_receive(packet, interface):
                 handle_position_message(packet['decoded'], packet)
             elif portnum == 'TELEMETRY_APP':
                 handle_telemetry_message(packet['decoded'], packet)
+            elif portnum == 'ADMIN_APP':
+                handle_admin_message(packet['decoded'], packet)
             else:
                 logging.warning(f"Unhandled portnum: {portnum}")
+        elif 'fromId' in packet and packet.get('decoded', {}).get('portnum') == 'ADMIN_APP':
+            handle_admin_message(packet['decoded'], packet)
         elif 'encrypted' in packet:
             logging.info("Received encrypted packet")
         else:
@@ -115,8 +122,37 @@ def on_receive(packet, interface):
         logging.error(f"Unexpected error in on_receive: {e}")
         logging.exception("Stack trace:")
 
+def handle_admin_message(decoded_data, packet):
+    try:
+        if decoded_data.get('payload'):
+            admin_message = mesh_pb2.AdminMessage()
+            admin_message.ParseFromString(decoded_data['payload'])
+            if admin_message.get_ack:
+                ack_packet_id = admin_message.get_ack.for_packet
+                logging.info(f"ACK received for packet ID: {ack_packet_id}")
+                socketio.emit('message_ack', {'packetId': ack_packet_id})
+    except Exception as e:
+        logging.error(f"Error in handle_admin_message: {e}")
+        logging.exception("Stack trace:")
+
+def handle_routing_message(decoded_data, packet):
+    try:
+        if decoded_data.get('requestId'):
+            ack_packet_id = decoded_data.get('requestId')
+            logging.info(f"ACK received for packet ID: {ack_packet_id}")
+            socketio.emit('message_ack', {'packetId': ack_packet_id})
+    except Exception as e:
+        logging.error(f"Error in handle_routing_message: {e}")
+        logging.exception("Stack trace:")
+
 def update_node(node_id, data):
     global found_nodes
+    if not node_id:
+        node_id = data.get('from') or data.get('fromId')
+    if not node_id:
+        logging.warning("Attempted to update node with empty ID")
+        return
+    
     if node_id not in found_nodes:
         found_nodes[node_id] = {}
     
@@ -128,15 +164,27 @@ def update_node(node_id, data):
             'shortName': data.get('user', {}).get('shortName'),
             'macaddr': data.get('user', {}).get('macaddr'),
             'hwModel': data.get('user', {}).get('hwModel'),
-            'role': data.get('user', {}).get('role'),
-            'isLicensed': data.get('user', {}).get('isLicensed')
+            'isLicensed': data.get('user', {}).get('isLicensed'),
+            'role': data.get('user', {}).get('role')
         },
-        'position': data.get('position', {}),
+        'position': {
+            'latitude': data.get('position', {}).get('latitude'),
+            'longitude': data.get('position', {}).get('longitude'),
+            'altitude': data.get('position', {}).get('altitude'),
+            'time': data.get('position', {}).get('time'),
+            'latitudeI': data.get('position', {}).get('latitudeI'),
+            'longitudeI': data.get('position', {}).get('longitudeI')
+        },
         'snr': data.get('rxSnr') or data.get('snr'),
         'lastHeard': data.get('rxTime') or data.get('lastHeard'),
-        'deviceMetrics': data.get('deviceMetrics', {}),
-        'hopsAway': data.get('hopStart') or data.get('hopsAway')
+        'deviceMetrics': data.get('deviceMetrics') or {},
+        'hopsAway': data.get('hopStart') or data.get('hopsAway'),
+        'telemetry': data.get('telemetry') or {}
     }
+    
+    node_info = {k: v for k, v in node_info.items() if v is not None}
+    node_info['user'] = {k: v for k, v in node_info['user'].items() if v is not None}
+    node_info['position'] = {k: v for k, v in node_info['position'].items() if v is not None}
     
     found_nodes[node_id] = merge_dicts(found_nodes[node_id], node_info)
     
@@ -219,27 +267,76 @@ def handle_nodeinfo_message(decoded_data, packet):
                 'shortName': payload.short_name,
                 'macaddr': payload.macaddr.hex(),
                 'hwModel': payload.hw_model,
-                'isLicensed': payload.is_licensed
+                'isLicensed': payload.is_licensed,
+                'role': payload.role if hasattr(payload, 'role') else None
             },
-            'num': packet.get('fromId') or payload.id,  
+            'num': packet.get('fromId') or packet.get('from') or payload.id,
             'snr': packet.get('rxSnr'),
             'lastHeard': packet.get('rxTime'),
             'hopsAway': packet.get('hopStart')
         }
         
+        # Position information
         if hasattr(payload, 'latitude') and hasattr(payload, 'longitude'):
             node_info['position'] = {
                 'latitude': payload.latitude,
                 'longitude': payload.longitude,
+                'latitudeI': int(payload.latitude * 1e7) if payload.latitude is not None else None,
+                'longitudeI': int(payload.longitude * 1e7) if payload.longitude is not None else None,
                 'altitude': payload.altitude if hasattr(payload, 'altitude') else None,
                 'time': payload.last_heard if hasattr(payload, 'last_heard') else None
             }
         
-        if hasattr(payload, 'battery_level') or hasattr(payload, 'voltage'):
-            node_info['deviceMetrics'] = {
-                'batteryLevel': payload.battery_level if hasattr(payload, 'battery_level') else None,
-                'voltage': payload.voltage if hasattr(payload, 'voltage') else None
+        # Device metrics
+        node_info['deviceMetrics'] = {}
+        if hasattr(payload, 'battery_level'):
+            node_info['deviceMetrics']['batteryLevel'] = payload.battery_level
+        if hasattr(payload, 'voltage'):
+            node_info['deviceMetrics']['voltage'] = payload.voltage
+        if hasattr(payload, 'channel_utilization'):
+            node_info['deviceMetrics']['channelUtilization'] = payload.channel_utilization
+        if hasattr(payload, 'air_util_tx'):
+            node_info['deviceMetrics']['airUtilTx'] = payload.air_util_tx
+        if hasattr(payload, 'snr'):
+            node_info['deviceMetrics']['snr'] = payload.snr
+        if hasattr(payload, 'uptime_seconds'):
+            node_info['deviceMetrics']['uptimeSeconds'] = payload.uptime_seconds
+
+        # Telemetry (if available)
+        if hasattr(payload, 'telemetry'):
+            node_info['telemetry'] = {
+                'time': payload.telemetry.time,
+                'deviceMetrics': {
+                    'batteryLevel': payload.telemetry.device_metrics.battery_level,
+                    'voltage': payload.telemetry.device_metrics.voltage,
+                    'channelUtilization': payload.telemetry.device_metrics.channel_utilization,
+                    'airUtilTx': payload.telemetry.device_metrics.air_util_tx,
+                    'uptimeSeconds': payload.telemetry.device_metrics.uptime_seconds
+                }
             }
+            if hasattr(payload.telemetry, 'environment'):
+                node_info['telemetry']['environment'] = {
+                    'temperature': payload.telemetry.environment.temperature,
+                    'relativeHumidity': payload.telemetry.environment.relative_humidity,
+                    'barometricPressure': payload.telemetry.environment.barometric_pressure,
+                    'gasResistance': payload.telemetry.environment.gas_resistance,
+                    'voltage': payload.telemetry.environment.voltage,
+                    'current': payload.telemetry.environment.current,
+                    'satelliteCount': payload.telemetry.environment.satellite_count
+                }
+
+        node_info = {k: v for k, v in node_info.items() if v}
+        node_info['user'] = {k: v for k, v in node_info['user'].items() if v is not None}
+        if 'position' in node_info:
+            node_info['position'] = {k: v for k, v in node_info['position'].items() if v is not None}
+        if 'deviceMetrics' in node_info:
+            node_info['deviceMetrics'] = {k: v for k, v in node_info['deviceMetrics'].items() if v is not None}
+        if 'telemetry' in node_info:
+            node_info['telemetry'] = {k: v for k, v in node_info['telemetry'].items() if v}
+            if 'deviceMetrics' in node_info['telemetry']:
+                node_info['telemetry']['deviceMetrics'] = {k: v for k, v in node_info['telemetry']['deviceMetrics'].items() if v is not None}
+            if 'environment' in node_info['telemetry']:
+                node_info['telemetry']['environment'] = {k: v for k, v in node_info['telemetry']['environment'].items() if v is not None}
 
         update_node(node_info['num'], node_info)
         
@@ -262,9 +359,28 @@ def handle_telemetry_message(decoded_data, packet):
                 'uptimeSeconds': payload.device_metrics.uptime_seconds
             }
         }
-        update_node(packet.get('fromId'), {'telemetry': telemetry_data})
+        if payload.HasField('environment'):
+            telemetry_data['environment'] = {
+                'temperature': payload.environment.temperature,
+                'relativeHumidity': payload.environment.relative_humidity,
+                'barometricPressure': payload.environment.barometric_pressure,
+                'gasResistance': payload.environment.gas_resistance,
+                'voltage': payload.environment.voltage,
+                'current': payload.environment.current,
+                'satelliteCount': payload.environment.satellite_count
+            }
+        update_node(packet.get('fromId') or packet.get('from'), {'telemetry': telemetry_data})
     except Exception as e:
         logging.error(f"Error in handle_telemetry_message: {e}")
+        logging.exception("Stack trace:")
+
+def handle_ack_message(decoded_data, packet):
+    try:
+        ack_packet_id = decoded_data.get('requestId')
+        logging.info(f"ACK received for packet ID: {ack_packet_id}")
+        socketio.emit('message_ack', {'packetId': ack_packet_id})
+    except Exception as e:
+        logging.error(f"Error in handle_ack_message: {e}")
         logging.exception("Stack trace:")
 
 @app.route('/')
@@ -323,14 +439,17 @@ def handle_send_message(data):
         channel_index = data.get('channel', 0)
         interface = app.config.get('serial_interface')
         if interface:
-            interface.sendText(message, channelIndex=channel_index)
-            logging.info(f"Sent message: {message} on channel {channel_index}")
+            mesh_packet = interface.sendText(message, channelIndex=channel_index, wantAck=True)
+            packet_id = mesh_packet.id
+            logging.info(f"Sent message: {message} on channel {channel_index} with packet ID: {packet_id}")
             
             sent_message = {
                 'sender': 'You',  
                 'text': message,
                 'channel': channel_index,
-                'timestamp': int(time.time())
+                'timestamp': int(time.time()),
+                'packetId': packet_id,
+                'status': 'pending'
             }
             
             if 'messages' not in app.config:
@@ -343,13 +462,27 @@ def handle_send_message(data):
             socketio.emit('new_message', {'raw_message': sent_message})
             logging.debug(f"Emitted new_message event for sent message: {sent_message}")
             
-            socketio.emit('message_sent', {'status': 'success'})
+            socketio.emit('message_sent', {'status': 'success', 'packetId': packet_id})
+            
+            socketio.start_background_task(wait_for_ack, interface, packet_id)
         else:
             socketio.emit('serial_error', {'message': 'Not connected'})
     except Exception as e:
-        logging.error(f"Error in send_message: {e}")
+        logging.error(f"Error in send_message: {str(e)}")
         logging.exception("Stack trace:")
         socketio.emit('serial_error', {'message': str(e)})
+
+def wait_for_ack(interface, packet_id):
+    try:
+        ack = interface.waitForAckNak(packet_id, 30)  
+        if ack:
+            logging.info(f"ACK received for packet ID: {packet_id}")
+            socketio.emit('message_ack', {'packetId': packet_id})
+        else:
+            logging.warning(f"ACK timeout for packet ID: {packet_id}")
+            socketio.emit('message_ack_timeout', {'packetId': packet_id})
+    except Exception as e:
+        logging.error(f"Error waiting for ACK: {str(e)}")
 
 if __name__ == '__main__':
     socketio.run(app, port=5678)

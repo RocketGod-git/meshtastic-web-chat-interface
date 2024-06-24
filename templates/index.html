@@ -47,7 +47,7 @@
                 <div id="messagesContainer" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px;"></div>
             </div>
             <div class="col-md-6">
-                <h2>Node Information</h2>
+                <h2>Node Information <span id="nodeCount"></span></h2>
                 <div id="nodeInfo" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px;"></div>
             </div>
         </div>
@@ -72,6 +72,9 @@ $(document).ready(function() {
     }
 
     function updateNodeInfo() {
+        var nodeCount = Object.keys(nodes).length;
+        $('#nodeCount').text(`(${nodeCount})`);
+        
         var nodeInfoContainer = $('#nodeInfo');
         nodeInfoContainer.empty();
         Object.values(nodes).sort((a, b) => (b.lastHeard || 0) - (a.lastHeard || 0)).forEach(function(node) {
@@ -92,10 +95,12 @@ $(document).ready(function() {
                         '<strong>SNR:</strong> ' + (node.snr !== undefined ? node.snr.toFixed(2) : 'N/A') + '<br>' +
                         '<strong>Hops Away:</strong> ' + (node.hopsAway !== undefined ? node.hopsAway : 'N/A') + '<br>';
             
-            if (node.position) {
+            if (node.position && (node.position.latitude !== undefined || node.position.latitudeI !== undefined)) {
+                var lat = node.position.latitude || (node.position.latitudeI / 1e7);
+                var lon = node.position.longitude || (node.position.longitudeI / 1e7);
                 nodeHtml += '<strong>Position:</strong><br>' +
-                            '&nbsp;&nbsp;Latitude: ' + (node.position.latitude !== undefined ? node.position.latitude.toFixed(6) : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Longitude: ' + (node.position.longitude !== undefined ? node.position.longitude.toFixed(6) : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Latitude: ' + lat.toFixed(7) + '<br>' +
+                            '&nbsp;&nbsp;Longitude: ' + lon.toFixed(7) + '<br>' +
                             '&nbsp;&nbsp;Altitude: ' + (node.position.altitude !== undefined ? node.position.altitude + 'm' : 'N/A') + '<br>' +
                             '&nbsp;&nbsp;Time: ' + (node.position.time ? new Date(node.position.time * 1000).toLocaleString() : 'N/A') + '<br>';
             }
@@ -107,6 +112,25 @@ $(document).ready(function() {
                             '&nbsp;&nbsp;Channel Utilization: ' + (node.deviceMetrics.channelUtilization !== undefined ? node.deviceMetrics.channelUtilization.toFixed(2) : 'N/A') + '<br>' +
                             '&nbsp;&nbsp;Air Utilization TX: ' + (node.deviceMetrics.airUtilTx !== undefined ? node.deviceMetrics.airUtilTx.toFixed(2) : 'N/A') + '<br>' +
                             '&nbsp;&nbsp;Uptime: ' + (node.deviceMetrics.uptimeSeconds !== undefined ? formatUptime(node.deviceMetrics.uptimeSeconds) : 'N/A') + '<br>';
+            }
+
+            if (node.telemetry && node.telemetry.deviceMetrics) {
+                nodeHtml += '<strong>Telemetry:</strong><br>' +
+                            '&nbsp;&nbsp;Time: ' + (node.telemetry.time ? new Date(node.telemetry.time * 1000).toLocaleString() : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Battery Level: ' + (node.telemetry.deviceMetrics.batteryLevel !== undefined ? node.telemetry.deviceMetrics.batteryLevel + '%' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Voltage: ' + (node.telemetry.deviceMetrics.voltage !== undefined ? node.telemetry.deviceMetrics.voltage.toFixed(3) + 'V' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Channel Utilization: ' + (node.telemetry.deviceMetrics.channelUtilization !== undefined ? node.telemetry.deviceMetrics.channelUtilization.toFixed(2) : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Air Utilization TX: ' + (node.telemetry.deviceMetrics.airUtilTx !== undefined ? node.telemetry.deviceMetrics.airUtilTx.toFixed(2) : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Uptime: ' + (node.telemetry.deviceMetrics.uptimeSeconds !== undefined ? formatUptime(node.telemetry.deviceMetrics.uptimeSeconds) : 'N/A') + '<br>';
+            }
+
+            if (node.telemetry && node.telemetry.environment) {
+                nodeHtml += '<strong>Environment:</strong><br>' +
+                            '&nbsp;&nbsp;Temperature: ' + (node.telemetry.environment.temperature !== undefined ? node.telemetry.environment.temperature.toFixed(1) + '°C' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Relative Humidity: ' + (node.telemetry.environment.relativeHumidity !== undefined ? node.telemetry.environment.relativeHumidity.toFixed(1) + '%' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Barometric Pressure: ' + (node.telemetry.environment.barometricPressure !== undefined ? node.telemetry.environment.barometricPressure.toFixed(1) + ' hPa' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Gas Resistance: ' + (node.telemetry.environment.gasResistance !== undefined ? node.telemetry.environment.gasResistance.toFixed(1) + ' Ω' : 'N/A') + '<br>' +
+                            '&nbsp;&nbsp;Satellite Count: ' + (node.telemetry.environment.satelliteCount !== undefined ? node.telemetry.environment.satelliteCount : 'N/A') + '<br>';
             }
             
             nodeHtml += '</p></div></div>';
@@ -136,10 +160,12 @@ $(document).ready(function() {
         if (messages[currentChannel]) {
             messages[currentChannel].forEach(function(msg) {
                 var messageText;
+                var statusDot = msg.sender === 'You' ? 
+                    (msg.status === 'pending' ? '🟡' : (msg.status === 'acked' ? '🟢' : '🔴')) : '🟢';
                 if (msg.sender === 'You') {
-                    messageText = `<strong>You:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`;
+                    messageText = `${statusDot} <strong>You:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()} (ID: ${msg.packetId})</small>`;
                 } else {
-                    messageText = msg.formatted_message || `<strong>${msg.sender}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`;
+                    messageText = `${statusDot} ${msg.formatted_message || `<strong>${msg.sender}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`}`;
                 }
                 messagesContainer.append('<p>' + messageText + '</p><hr>');
             });
@@ -250,6 +276,9 @@ $(document).ready(function() {
         if (!messages[messageData.channel]) {
             messages[messageData.channel] = [];
         }
+        if (messageData.sender === 'You') {
+            messageData.status = 'pending';
+        }
         messages[messageData.channel].push(messageData);
         if (messageData.channel === currentChannel) {
             updateMessages();
@@ -274,6 +303,28 @@ $(document).ready(function() {
         nodes[nodeId] = data;
         updateNodeInfo();
     });
+
+    socket.on('message_ack', function(data) {
+        logDebugMessage('ACK received for packet ID: ' + data.packetId);
+        updateMessageStatus(data.packetId, 'acked');
+    });
+
+    socket.on('message_ack_timeout', function(data) {
+        logDebugMessage('ACK timeout for packet ID: ' + data.packetId);
+        updateMessageStatus(data.packetId, 'timeout');
+    });
+
+    function updateMessageStatus(packetId, status) {
+        Object.keys(messages).forEach(function(channel) {
+            messages[channel].forEach(function(msg) {
+                if (msg.packetId === packetId) {
+                    msg.status = status;
+                    logDebugMessage('Message status updated to ' + status + ' for packet ID: ' + packetId);
+                }
+            });
+        });
+        updateMessages();
+    }
 
     socket.on('all_messages', function(data) {
         logDebugMessage('All messages received: ' + JSON.stringify(data));

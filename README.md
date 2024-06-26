@@ -4,6 +4,10 @@ The Meshtastic Chat Interface is a web-based application that allows you to comm
 
 ![image](https://github.com/RocketGod-git/meshtastic-web-chat-interface/assets/57732082/e8f9bfec-749c-4e9e-bb3e-4c51231957c7)
 
+https://github.com/RocketGod-git/meshtastic-web-chat-interface/assets/57732082/0919052d-5657-4f80-b3e4-e8737f22b010
+
+![Discord_Webhook](https://github.com/RocketGod-git/meshtastic-web-chat-interface/assets/57732082/cabb6fa4-8622-4a7f-a81c-30e57e42f327)
+
 
 ## Prerequisites
 

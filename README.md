@@ -1,6 +1,9 @@
 # Meshtastic Web Chat Interface
-# --> Beta - work in progress <--
+
 The Meshtastic Chat Interface is a web-based application that allows you to communicate with Meshtastic devices using a user-friendly interface. With this application, you can select a COM port, connect to a Meshtastic device, view available channels, send messages, and monitor the serial communication.
+
+![image](https://github.com/RocketGod-git/meshtastic-web-chat-interface/assets/57732082/e8f9bfec-749c-4e9e-bb3e-4c51231957c7)
+
 
 ## Prerequisites
 
@@ -11,10 +14,12 @@ Before running the application, ensure that you have the following:
 
 ## Running the Application
 
-1. Start the Flask server by running the app.py script:
+1. Start the Flask server by running the run file:
 
-`python app.py`
+`run.bat` for Windows
+`run.sh` for Linux
 
+A virtual environment will be made and pip will automatically install dependencies.
 The server will start running on `http://127.0.0.1:5678`.
 
 2. Open your web browser and visit `http://127.0.0.1:5678` to access the Meshtastic Chat Interface.
@@ -37,7 +42,9 @@ The server will start running on `http://127.0.0.1:5678`.
 
 - If you experience any other problems or have questions, please open an issue on the GitHub repository.
 
-## Contributing
+## Contributors
+
+RocketGod (just me so far... c'monnnnnnn help 
 
 Contributions to the Meshtastic Chat Interface are welcome! If you find any bugs, have feature requests, or want to contribute improvements, please open an issue or submit a pull request on the GitHub repository.
 

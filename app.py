@@ -550,25 +550,39 @@ def handle_send_message(data):
             packet_id = mesh_packet.id
             logging.info(f"Sent message: '{message}' on channel {channel_index} with packet ID: {packet_id}")
             
+            # Send to Discord webhook
             try:
                 with open(WEBHOOK_FILE, 'r') as f:
                     webhook_data = json.load(f)
                     webhook_url = webhook_data.get('url')
                 
                 if webhook_url:
-                    webhook_payload = {
-                        "embeds": [{
-                            "title": "📡 New Meshtastic Message",
-                            "description": message,
-                            "color": 3447003,
-                            "fields": [
-                                {"name": "👤 From", "value": "You"},
-                                {"name": "📢 Channel", "value": f"Channel {channel_index}"}
-                            ],
-                            "footer": {"text": "Meshtastic"},
-                            "timestamp": datetime.utcnow().isoformat()
-                        }]
+                    my_node_info = interface.getMyNodeInfo()
+                    device_info = my_node_info.get('user', {}).get('hwModel', 'Unknown Device')
+                    battery_level = my_node_info.get('deviceMetrics', {}).get('batteryLevel')
+                    if battery_level is not None:
+                        device_info += f" (🔋 {battery_level}%)"
+
+                    embed = {
+                        "title": "📡 New Meshtastic Message",
+                        "description": message,
+                        "color": 3447003,
+                        "fields": [
+                            {"name": "👤 From", "value": my_node_info.get('user', {}).get('longName', 'You')},
+                            {"name": "🔧 Device", "value": device_info}
+                        ],
+                        "footer": {"text": "Meshtastic"},
+                        "timestamp": datetime.utcnow().isoformat()
                     }
+
+                    position = my_node_info.get('position', {})
+                    if position.get('latitude') is not None and position.get('longitude') is not None:
+                        embed["fields"].append({
+                            "name": "📍 Location",
+                            "value": f"[View on Map](https://www.google.com/maps?q={position['latitude']},{position['longitude']})"
+                        })
+
+                    webhook_payload = {"embeds": [embed]}
                     response = requests.post(webhook_url, json=webhook_payload)
                     response.raise_for_status()
                     logging.info("Message sent to Discord webhook successfully")
@@ -593,7 +607,7 @@ def handle_send_message(data):
         logging.error(f"Error in send_message: {str(e)}")
         logging.exception("Stack trace:")
         socketio.emit('serial_error', {'message': str(e)})
-
+        
 @socketio.on('load_webhook_url')
 def handle_load_webhook_url():
     try:

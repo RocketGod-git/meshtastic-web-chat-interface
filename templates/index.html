@@ -6,17 +6,81 @@
     <title>Meshtastic Web Interface</title>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            padding-bottom: 60px; 
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .card {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+        }
+        .form-control, .btn {
+            background-color: #2c2c2c;
+            color: #e0e0e0;
+            border-color: #3c3c3c;
+        }
+        .form-control:focus {
+            background-color: #3c3c3c;
+            color: #ffffff;
+        }
+        #connectBtn {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        #disconnectBtn {
+            background-color: #dc3545;
+            border-color: #dc3545;
+        }
+        #sendBtn {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        #map {
+            height: 400px;
+            margin-bottom: 20px;
+        }
+        #messagesContainer, #nodeInfo {
+            height: 500px;
+        }
+        .footer-buttons {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: #1e1e1e;
+            padding: 10px;
+            text-align: center;
+        }
+        .footer-buttons .btn {
+            margin: 0 5px;
+        }
+        #debugContainer {
+            display: none;
+            margin-bottom: 20px;
+        }
+        #debugWindow {
+            height: 300px;
+            overflow-y: scroll;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1>Meshtastic Web Interface</h1>
-        <div class="row">
-            <div class="col-md-4">
+        <div class="row mb-3">
+            <div class="col-md-6">
                 <div class="form-group">
                     <label for="portSelect">Select COM Port:</label>
                     <select class="form-control" id="portSelect">
@@ -25,51 +89,183 @@
                         {% endfor %}
                     </select>
                 </div>
-                <button class="btn btn-primary" id="connectBtn">Connect</button>
+                <button class="btn btn-custom-blue" id="connectBtn">Connect</button>
                 <button class="btn btn-danger" id="disconnectBtn" disabled>Disconnect</button>
             </div>
-            <div class="col-md-8">
-                <div class="form-group">
-                    <label for="messageInput">Message:</label>
-                    <input type="text" class="form-control" id="messageInput" placeholder="Enter message">
-                </div>
+            <div class="col-md-6">
                 <div class="form-group">
                     <label for="channelSelect">Select Channel:</label>
                     <select class="form-control" id="channelSelect"></select>
                 </div>
-                <button class="btn btn-success" id="sendBtn" disabled>Send Message</button>
             </div>
         </div>
         <hr>
         <div class="row">
             <div class="col-md-6">
                 <h2>Messages</h2>
-                <div id="messagesContainer" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px;"></div>
+                <div class="form-group">
+                    <label for="messageInput">Message:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="messageInput" placeholder="Enter message">
+                        <div class="input-group-append">
+                            <button class="btn btn-success" id="sendBtn" disabled>Send</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="messagesContainer" class="bg-dark text-light p-3 mb-3" style="height: 550px; overflow-y: scroll;"></div>
             </div>
             <div class="col-md-6">
                 <h2>Node Information <span id="nodeCount"></span></h2>
-                <div id="nodeInfo" style="height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px;"></div>
+                <div class="mb-3">
+                    <div style="display: inline-block; width: 48%; margin-right: 2%;">
+                        <label for="nodeSortSelect">Sort by:</label>
+                        <select id="nodeSortSelect" class="form-control">
+                            <option value="lastHeard">Last Heard</option>
+                            <option value="snr">SNR</option>
+                            <option value="hopsAway">Hops Away</option>
+                        </select>
+                    </div>
+                    <div style="display: inline-block; width: 48%;">
+                        <label for="nodeFilterInput">Filter nodes:</label>
+                        <input type="text" id="nodeFilterInput" class="form-control" placeholder="Enter node name or ID">
+                    </div>
+                </div>
+                <div id="nodeInfo" class="bg-dark text-light p-3 mb-3" style="height: 550px; overflow-y: scroll;"></div>
             </div>
         </div>
-        <hr>
-        <h2>Debug Window</h2>
-        <div id="debugWindow" style="height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px;"></div>
+        <h2>Node Map</h2>
+        <div id="map"></div>
+        <div id="debugContainer" style="display: none;">
+            <h2>Debug Window</h2>
+            <div id="debugWindow" class="bg-dark text-light p-3" style="height: 300px; overflow-y: scroll;"></div>
+        </div>
+
+    <div class="footer-buttons">
+        <button class="btn btn-secondary" id="debugBtn">Debug</button>
+        <button class="btn btn-secondary" id="settingsBtn">Settings</button>
+
     </div>
-
+</body>
     <script>
-$(document).ready(function() {
-    var socket = io();
-    var currentChannel = 0;
-    var nodes = {};
-    var messages = {};
-
-    function logDebugMessage(message) {
-        var debugWindow = $('#debugWindow');
-        var timestamp = new Date().toLocaleString();
-        debugWindow.append('<p>[' + timestamp + '] ' + message + '</p>');
-        debugWindow.scrollTop(debugWindow[0].scrollHeight);
-        console.log('[DEBUG] ' + message);
+    function hasValidPosition(node) {
+        return node.position &&
+            typeof node.position.latitude === 'number' &&
+            typeof node.position.longitude === 'number' &&
+            !isNaN(node.position.latitude) &&
+            !isNaN(node.position.longitude);
     }
+
+    $(document).ready(function() {
+        var socket = io();
+        var currentChannel = 0;
+        var nodes = {};
+        var messages = {};
+        var map;
+        var markers = {};
+        var messageTimeouts = {};
+
+
+        function initializeData() {
+            try {
+                if (typeof initialChannels !== 'undefined' && initialChannels.length > 0) {
+                    updateChannelList(initialChannels);
+                } else {
+                    logDebugMessage('No initial channel data available');
+                    updateChannelList([{index: 0, name: 'Default Channel'}]);
+                }
+
+                if (typeof initialNodes !== 'undefined' && Object.keys(initialNodes).length > 0) {
+                    nodes = initialNodes;
+                    updateNodeInfo();
+                    logDebugMessage('Nodes populated: ' + Object.keys(nodes).length);
+                } else {
+                    logDebugMessage('No initial node data available');
+                }
+
+                messages = typeof initialMessages !== 'undefined' ? initialMessages : {};
+                updateMessages();
+
+                if (Object.keys(messages).length === 0) {
+                    logDebugMessage('No initial message data available');
+                }
+            } catch (error) {
+                console.error('Error in initial data population:', error);
+                logDebugMessage('Error populating initial data: ' + error.message);
+            }
+        }
+
+        initializeData();
+        initMap();        
+
+        $('#debugBtn').click(function() {
+            $('#debugContainer').toggle();
+            $(this).toggleClass('btn-secondary btn-primary');
+            if ($('#debugContainer').is(':visible')) {
+                $('html, body').animate({
+                    scrollTop: $('#debugContainer').offset().top - 20
+                }, 500);
+            }
+        });
+
+        $('#settingsBtn').click(function() {
+            console.log('Settings button clicked');
+            logDebugMessage('Settings button clicked');
+        });
+        
+        function initMap() {
+            map = L.map('map').setView([0, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        function updateMap() {
+            var bounds = L.latLngBounds();
+            var hasValidPositionNode = false;
+
+            Object.values(nodes).forEach(function(node) {
+                if (hasValidPosition(node)) {
+                    var latLng = L.latLng(node.position.latitude, node.position.longitude);
+                    bounds.extend(latLng);
+                    hasValidPositionNode = true;
+
+                    if (markers[node.num]) {
+                        markers[node.num].setLatLng(latLng);
+                    } else {
+                        var nodeName = ((node.user && node.user.longName) || '') + 
+                                       ((node.user && node.user.shortName) ? ` (${node.user.shortName})` : '');
+                        if (!nodeName.trim()) nodeName = node.num || 'Unknown';
+
+                        markers[node.num] = L.marker(latLng).addTo(map)
+                            .bindPopup(nodeName);
+                    }
+                } else if (markers[node.num]) {
+                    map.removeLayer(markers[node.num]);
+                    delete markers[node.num];
+                }
+            });
+
+            if (hasValidPositionNode) {
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+
+    function formatUptime(seconds) {
+        if (seconds === undefined) return 'N/A';
+        var days = Math.floor(seconds / 86400);
+        var hours = Math.floor((seconds % 86400) / 3600);
+        var minutes = Math.floor((seconds % 3600) / 60);
+        var remainingSeconds = seconds % 60;
+        return `${days}d ${hours}h ${minutes}m ${remainingSeconds}s`;
+    }    
+
+    $('#nodeSortSelect').change(function() {
+        updateNodeInfo();
+    });
+
+    $('#nodeFilterInput').on('input', function() {
+        updateNodeInfo();
+    });
 
     function updateNodeInfo() {
         var nodeCount = Object.keys(nodes).length;
@@ -77,101 +273,128 @@ $(document).ready(function() {
         
         var nodeInfoContainer = $('#nodeInfo');
         nodeInfoContainer.empty();
-        Object.values(nodes).sort((a, b) => (b.lastHeard || 0) - (a.lastHeard || 0)).forEach(function(node) {
-            var nodeName = (node.user.longName || '') + (node.user.shortName ? ` (${node.user.shortName})` : '');
-            if (!nodeName.trim()) nodeName = node.num;
-            
-            var nodeHtml = '<div class="card mb-2">' +
-                        '<div class="card-body">' +
-                        '<h5 class="card-title">' + nodeName + '</h5>' +
-                        '<p class="card-text">' +
-                        '<strong>ID:</strong> ' + node.num + '<br>' +
-                        '<strong>User ID:</strong> ' + (node.user.id || 'N/A') + '<br>' +
-                        '<strong>Mac Address:</strong> ' + (node.user.macaddr || 'N/A') + '<br>' +
-                        '<strong>Hardware Model:</strong> ' + (node.user.hwModel || 'N/A') + '<br>' +
-                        '<strong>Role:</strong> ' + (node.user.role || 'N/A') + '<br>' +
-                        '<strong>Licensed:</strong> ' + (node.user.isLicensed ? 'Yes' : 'No') + '<br>' +
-                        '<strong>Last Heard:</strong> ' + (node.lastHeard ? new Date(node.lastHeard * 1000).toLocaleString() : 'N/A') + '<br>' +
-                        '<strong>SNR:</strong> ' + (node.snr !== undefined ? node.snr.toFixed(2) : 'N/A') + '<br>' +
-                        '<strong>Hops Away:</strong> ' + (node.hopsAway !== undefined ? node.hopsAway : 'N/A') + '<br>';
-            
-            if (node.position && (node.position.latitude !== undefined || node.position.latitudeI !== undefined)) {
-                var lat = node.position.latitude || (node.position.latitudeI / 1e7);
-                var lon = node.position.longitude || (node.position.longitudeI / 1e7);
-                nodeHtml += '<strong>Position:</strong><br>' +
-                            '&nbsp;&nbsp;Latitude: ' + lat.toFixed(7) + '<br>' +
-                            '&nbsp;&nbsp;Longitude: ' + lon.toFixed(7) + '<br>' +
-                            '&nbsp;&nbsp;Altitude: ' + (node.position.altitude !== undefined ? node.position.altitude + 'm' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Time: ' + (node.position.time ? new Date(node.position.time * 1000).toLocaleString() : 'N/A') + '<br>';
+        
+        var sortBy = $('#nodeSortSelect').val();
+        var filterText = $('#nodeFilterInput').val().toLowerCase();
+        
+        var filteredNodes = Object.values(nodes).filter(function(node) {
+            var nodeName = ((node.user && node.user.longName) || '') + 
+                           ((node.user && node.user.shortName) ? ` (${node.user.shortName})` : '');
+            var nodeId = node.num ? node.num.toString().toLowerCase() : '';
+            return nodeName.toLowerCase().includes(filterText) || nodeId.includes(filterText);
+        });
+        
+        filteredNodes.sort(function(a, b) {
+            if (sortBy === 'lastHeard') {
+                return (b.lastHeard || 0) - (a.lastHeard || 0);
+            } else if (sortBy === 'snr') {
+                return (b.snr || -Infinity) - (a.snr || -Infinity);
+            } else if (sortBy === 'hopsAway') {
+                return (a.hopsAway || Infinity) - (b.hopsAway || Infinity);
             }
-            
-            if (node.deviceMetrics) {
-                nodeHtml += '<strong>Device Metrics:</strong><br>' +
-                            '&nbsp;&nbsp;Battery Level: ' + (node.deviceMetrics.batteryLevel !== undefined ? node.deviceMetrics.batteryLevel + '%' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Voltage: ' + (node.deviceMetrics.voltage !== undefined ? node.deviceMetrics.voltage.toFixed(3) + 'V' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Channel Utilization: ' + (node.deviceMetrics.channelUtilization !== undefined ? node.deviceMetrics.channelUtilization.toFixed(2) : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Air Utilization TX: ' + (node.deviceMetrics.airUtilTx !== undefined ? node.deviceMetrics.airUtilTx.toFixed(2) : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Uptime: ' + (node.deviceMetrics.uptimeSeconds !== undefined ? formatUptime(node.deviceMetrics.uptimeSeconds) : 'N/A') + '<br>';
-            }
+            return 0;
+        });
 
-            if (node.telemetry && node.telemetry.deviceMetrics) {
-                nodeHtml += '<strong>Telemetry:</strong><br>' +
-                            '&nbsp;&nbsp;Time: ' + (node.telemetry.time ? new Date(node.telemetry.time * 1000).toLocaleString() : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Battery Level: ' + (node.telemetry.deviceMetrics.batteryLevel !== undefined ? node.telemetry.deviceMetrics.batteryLevel + '%' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Voltage: ' + (node.telemetry.deviceMetrics.voltage !== undefined ? node.telemetry.deviceMetrics.voltage.toFixed(3) + 'V' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Channel Utilization: ' + (node.telemetry.deviceMetrics.channelUtilization !== undefined ? node.telemetry.deviceMetrics.channelUtilization.toFixed(2) : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Air Utilization TX: ' + (node.telemetry.deviceMetrics.airUtilTx !== undefined ? node.telemetry.deviceMetrics.airUtilTx.toFixed(2) : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Uptime: ' + (node.telemetry.deviceMetrics.uptimeSeconds !== undefined ? formatUptime(node.telemetry.deviceMetrics.uptimeSeconds) : 'N/A') + '<br>';
-            }
-
-            if (node.telemetry && node.telemetry.environment) {
-                nodeHtml += '<strong>Environment:</strong><br>' +
-                            '&nbsp;&nbsp;Temperature: ' + (node.telemetry.environment.temperature !== undefined ? node.telemetry.environment.temperature.toFixed(1) + '°C' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Relative Humidity: ' + (node.telemetry.environment.relativeHumidity !== undefined ? node.telemetry.environment.relativeHumidity.toFixed(1) + '%' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Barometric Pressure: ' + (node.telemetry.environment.barometricPressure !== undefined ? node.telemetry.environment.barometricPressure.toFixed(1) + ' hPa' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Gas Resistance: ' + (node.telemetry.environment.gasResistance !== undefined ? node.telemetry.environment.gasResistance.toFixed(1) + ' Ω' : 'N/A') + '<br>' +
-                            '&nbsp;&nbsp;Satellite Count: ' + (node.telemetry.environment.satelliteCount !== undefined ? node.telemetry.environment.satelliteCount : 'N/A') + '<br>';
-            }
+        filteredNodes.forEach(function(node) {
+            var nodeName = ((node.user && node.user.longName) || '') + 
+                           ((node.user && node.user.shortName) ? ` (${node.user.shortName})` : '');
+            if (!nodeName.trim()) nodeName = node.num || 'Unknown';
             
-            nodeHtml += '</p></div></div>';
+            var nodeHtml = `
+                <div class="card mb-2">
+                    <div class="card-body">
+                        <h5 class="card-title">${nodeName}</h5>
+                        <p class="card-text">
+                            <strong>ID:</strong> ${node.num || 'N/A'}<br>
+                            <strong>Last Heard:</strong> ${node.lastHeard ? new Date(node.lastHeard * 1000).toLocaleString() : 'N/A'}<br>
+                            <strong>SNR:</strong> ${node.snr !== undefined ? node.snr.toFixed(2) : 'N/A'}<br>
+                            <strong>Hops Away:</strong> ${node.hopsAway !== undefined ? node.hopsAway : 'N/A'}<br>
+                            <strong>Via MQTT:</strong> ${node.viaMqtt ? 'Yes' : 'No'}<br>
+                            ${node.user ? `
+                                <strong>User ID:</strong> ${node.user.id || 'N/A'}<br>
+                                <strong>Mac Address:</strong> ${node.user.macaddr || 'N/A'}<br>
+                                <strong>Hardware Model:</strong> ${node.user.hwModel || 'N/A'}<br>
+                                <strong>Role:</strong> ${node.user.role || 'N/A'}<br>
+                                <strong>Licensed:</strong> ${node.user.isLicensed ? 'Yes' : 'No'}<br>
+                            ` : ''}
+                        </p>
+                        ${node.position ? `
+                            <p>
+                                <strong>Position:</strong><br>
+                                Latitude: ${node.position.latitude !== undefined ? node.position.latitude.toFixed(7) : 'N/A'}<br>
+                                Longitude: ${node.position.longitude !== undefined ? node.position.longitude.toFixed(7) : 'N/A'}<br>
+                                Altitude: ${node.position.altitude !== undefined ? node.position.altitude + 'm' : 'N/A'}<br>
+                                Time: ${node.position.time ? new Date(node.position.time * 1000).toLocaleString() : 'N/A'}<br>
+                                ${node.position.PDOP !== undefined ? `PDOP: ${node.position.PDOP}<br>` : ''}
+                                ${node.position.groundSpeed !== undefined ? `Ground Speed: ${node.position.groundSpeed} m/s<br>` : ''}
+                                ${node.position.groundTrack !== undefined ? `Ground Track: ${(node.position.groundTrack / 1000000).toFixed(6)}°<br>` : ''}
+                                ${node.position.satsInView !== undefined ? `Satellites in View: ${node.position.satsInView}<br>` : ''}
+                                ${node.position.precisionBits !== undefined ? `Precision Bits: ${node.position.precisionBits}<br>` : ''}
+                            </p>
+                        ` : ''}
+                        ${node.deviceMetrics ? `
+                            <p>
+                                <strong>Device Metrics:</strong><br>
+                                ${Object.entries(node.deviceMetrics).map(([key, value]) => {
+                                    if (key === 'batteryLevel') value += '%';
+                                    else if (key === 'voltage') value = value.toFixed(3) + 'V';
+                                    else if (key === 'uptimeSeconds') value = formatUptime(value);
+                                    return `${key}: ${value}<br>`;
+                                }).join('')}
+                            </p>
+                        ` : ''}
+                        ${node.telemetry && node.telemetry.deviceMetrics ? `
+                            <p>
+                                <strong>Telemetry:</strong><br>
+                                Time: ${node.telemetry.time ? new Date(node.telemetry.time * 1000).toLocaleString() : 'N/A'}<br>
+                                ${Object.entries(node.telemetry.deviceMetrics).map(([key, value]) => {
+                                    if (key === 'batteryLevel') value += '%';
+                                    else if (key === 'voltage') value = value.toFixed(3) + 'V';
+                                    else if (key === 'uptimeSeconds') value = formatUptime(value);
+                                    return `${key}: ${value}<br>`;
+                                }).join('')}
+                            </p>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
             nodeInfoContainer.append(nodeHtml);
         });
+
+        updateMap();
         logDebugMessage('Node information updated');
     }
 
-    function formatUptime(seconds) {
-        var days = Math.floor(seconds / (3600*24));
-        var hours = Math.floor(seconds % (3600*24) / 3600);
-        var minutes = Math.floor(seconds % 3600 / 60);
-        var secs = Math.floor(seconds % 60);
-
-        var parts = [];
-        if (days > 0) parts.push(days + 'd');
-        if (hours > 0) parts.push(hours + 'h');
-        if (minutes > 0) parts.push(minutes + 'm');
-        if (secs > 0) parts.push(secs + 's');
-
-        return parts.join(' ');
-    }
+    $('#nodeSortSelect').change(updateNodeInfo);
+    $('#nodeFilterInput').on('input', updateNodeInfo);
 
     function updateMessages() {
         var messagesContainer = $('#messagesContainer');
         messagesContainer.empty();
-        if (messages[currentChannel]) {
-            messages[currentChannel].forEach(function(msg) {
-                var messageText;
-                var statusDot = msg.sender === 'You' ? 
-                    (msg.status === 'pending' ? '🟡' : (msg.status === 'acked' ? '🟢' : '🔴')) : '🟢';
-                if (msg.sender === 'You') {
-                    messageText = `${statusDot} <strong>You:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()} (ID: ${msg.packetId})</small>`;
-                } else {
-                    messageText = `${statusDot} ${msg.formatted_message || `<strong>${msg.sender}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`}`;
-                }
-                messagesContainer.append('<p>' + messageText + '</p><hr>');
-            });
+
+        console.log("Current channel:", currentChannel);
+        console.log("All messages:", messages);
+
+        if (!messages || !messages[currentChannel] || !Array.isArray(messages[currentChannel])) {
+            console.log("No messages for the current channel");
+            return;
         }
+
+        messages[currentChannel].forEach(function(msg) {
+            var messageText;
+            var statusDot = msg.sender === 'You' ? 
+                (msg.status === 'pending' ? '🟡' : (msg.status === 'acked' ? '🟢' : '🔴')) : '🟢';
+            
+            if (msg.sender === 'You') {
+                messageText = `${statusDot} <strong>You:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()} (ID: ${msg.packetId})</small>`;
+            } else {
+                messageText = `${statusDot} ${msg.formatted_message || `<strong>${msg.sender}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`}`;
+            }
+            messagesContainer.append('<p>' + messageText + '</p><hr>');
+        });
+
         messagesContainer.scrollTop(messagesContainer[0].scrollHeight);
-        logDebugMessage('Messages updated for channel ' + currentChannel);
+        console.log('Messages updated for channel ' + currentChannel);
     }
 
     function updateChannelList(channels) {
@@ -239,16 +462,16 @@ $(document).ready(function() {
 
     socket.on('serial_connected', function(data) {
         logDebugMessage('Serial connected: ' + JSON.stringify(data));
-        $('#connectBtn').prop('disabled', true);
-        $('#disconnectBtn').prop('disabled', false);
-        $('#sendBtn').prop('disabled', false);
+        $('#connectBtn').prop('disabled', true).removeClass('btn-primary').addClass('btn-secondary');
+        $('#disconnectBtn').prop('disabled', false).removeClass('btn-secondary').addClass('btn-danger');
+        $('#sendBtn').prop('disabled', false).removeClass('btn-secondary').addClass('btn-success');
     });
 
     socket.on('serial_disconnected', function() {
         logDebugMessage('Serial disconnected');
-        $('#connectBtn').prop('disabled', false);
-        $('#disconnectBtn').prop('disabled', true);
-        $('#sendBtn').prop('disabled', true);
+        $('#connectBtn').prop('disabled', false).removeClass('btn-secondary').addClass('btn-primary');
+        $('#disconnectBtn').prop('disabled', true).removeClass('btn-danger').addClass('btn-secondary');
+        $('#sendBtn').prop('disabled', true).removeClass('btn-success').addClass('btn-secondary');
         $('#channelSelect').empty();
         $('#messagesContainer').empty();
         $('#nodeInfo').empty();
@@ -261,23 +484,30 @@ $(document).ready(function() {
         alert('Serial error: ' + data.message);
     });
 
+    socket.on('routing_error', function(data) {
+        logDebugMessage('Routing error received: ' + JSON.stringify(data));
+        updateMessageStatus(data.packetId, 'failed', data.error);
+    });
+
+    socket.on('update_message_status', function(data) {
+        logDebugMessage('Message status update received: ' + JSON.stringify(data));
+        updateMessageStatus(data.packetId, data.status, data.error);
+    });
+
     socket.on('channel_list', function(data) {
         logDebugMessage('Channel list received: ' + JSON.stringify(data));
         updateChannelList(data.channels);
     });
 
     socket.on('new_message', function(data) {
-        logDebugMessage('New message received: ' + JSON.stringify(data));
+        console.log("New message received:", data);
         var messageData = data.raw_message || data;
         if (!messageData || typeof messageData.channel === 'undefined') {
-            logDebugMessage('Error: Invalid message format');
+            console.error('Error: Invalid message format');
             return;
         }
         if (!messages[messageData.channel]) {
             messages[messageData.channel] = [];
-        }
-        if (messageData.sender === 'You') {
-            messageData.status = 'pending';
         }
         messages[messageData.channel].push(messageData);
         if (messageData.channel === currentChannel) {
@@ -288,6 +518,9 @@ $(document).ready(function() {
     socket.on('message_sent', function(data) {
         if (data.status === 'success') {
             logDebugMessage('Message sent successfully');
+            messageTimeouts[data.packetId] = setTimeout(function() {
+                updateMessageStatus(data.packetId, 'timeout');
+            }, 60000); 
         } else {
             logDebugMessage('Error sending message: ' + data.message);
         }
@@ -295,23 +528,34 @@ $(document).ready(function() {
 
     socket.on('node_updated', function(data) {
         logDebugMessage('Node updated: ' + JSON.stringify(data));
-        if (!data.num && !data.user.id) {
+        if (!data.num && !(data.user && data.user.id)) {
             logDebugMessage('Error: Invalid node data');
             return;
         }
-        var nodeId = data.num || data.user.id;
-        nodes[nodeId] = data;
+        var nodeId = data.num || (data.user && data.user.id);
+        if (!nodes[nodeId]) {
+            nodes[nodeId] = {};
+        }
+        nodes[nodeId] = Object.assign({}, nodes[nodeId], data);
         updateNodeInfo();
+        updateMap();
     });
 
     socket.on('message_ack', function(data) {
         logDebugMessage('ACK received for packet ID: ' + data.packetId);
+        if (messageTimeouts[data.packetId]) {
+            clearTimeout(messageTimeouts[data.packetId]);
+            delete messageTimeouts[data.packetId];
+        }
         updateMessageStatus(data.packetId, 'acked');
     });
 
     socket.on('message_ack_timeout', function(data) {
         logDebugMessage('ACK timeout for packet ID: ' + data.packetId);
-        updateMessageStatus(data.packetId, 'timeout');
+        if (messageTimeouts[data.packetId]) {
+            updateMessageStatus(data.packetId, 'timeout');
+            delete messageTimeouts[data.packetId];
+        }
     });
 
     function updateMessageStatus(packetId, status) {
@@ -326,43 +570,32 @@ $(document).ready(function() {
         updateMessages();
     }
 
-    socket.on('all_messages', function(data) {
-        logDebugMessage('All messages received: ' + JSON.stringify(data));
-        messages = {};
-        if (Array.isArray(data.messages)) {
-            data.messages.forEach(function(msg) {
-                if (!messages[msg.channel]) {
-                    messages[msg.channel] = [];
-                }
-                messages[msg.channel].push(msg);
-            });
-            updateMessages();
-        } else {
-            logDebugMessage('Error: Invalid messages data');
+        function requestAllMessages() {
+            socket.emit('get_messages');
         }
+
+        socket.on('all_messages', function(data) {
+            console.log("All messages received:", data);
+            messages = data.messages || {};
+            updateMessages();
+        });
+
+        $('#channelSelect').change(function() {
+            currentChannel = parseInt($(this).val());
+            updateMessages();
+            console.log('Switched to channel: ' + currentChannel);
+        });
+
+        socket.emit('get_messages');
     });
 
-    try {
-        {% if channels %}
-            updateChannelList({{ channels|tojson }});
-        {% else %}
-            logDebugMessage('No initial channel data available');
-        {% endif %}
 
-        {% if nodes %}
-            {% for node in nodes %}
-                nodes[{{ node.num }}] = {{ node|tojson }};
-            {% endfor %}
-            updateNodeInfo();
-            logDebugMessage('Nodes populated: ' + Object.keys(nodes).length);
-        {% else %}
-            logDebugMessage('No initial node data available');
-        {% endif %}
-    } catch (error) {
-        console.error('Error in initial data population:', error);
-        logDebugMessage('Error populating initial data: ' + error.message);
+    function logDebugMessage(message) {
+        var debugWindow = $('#debugWindow');
+        var timestamp = new Date().toLocaleString();
+        debugWindow.append('<p>[' + timestamp + '] ' + message + '</p>');
+        debugWindow.scrollTop(debugWindow[0].scrollHeight);
     }
-});
-    </script>
+</script>
 </body>
 </html>

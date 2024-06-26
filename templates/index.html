@@ -74,6 +74,25 @@
             height: 300px;
             overflow-y: scroll;
         }
+        .modal-content {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+        }
+        .modal-header, .modal-footer {
+            border-color: #3c3c3c;
+        }
+        .close {
+            color: #e0e0e0;
+        }
+        #webhookUrl {
+            width: calc(100% - 40px);
+            display: inline-block;
+        }
+        #deleteWebhook {
+            color: #dc3545;
+            cursor: pointer;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -132,6 +151,33 @@
                 </div>
                 <div id="nodeInfo" class="bg-dark text-light p-3 mb-3" style="height: 550px; overflow-y: scroll;"></div>
             </div>
+            <div class="modal fade" id="discordWebhookModal" tabindex="-1" role="dialog" aria-labelledby="discordWebhookModalLabel" aria-hidden="true">
+                <div class="modal-dialog" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="discordWebhookModalLabel">Discord Webhook</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label for="webhookUrl">Webhook URL:</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="webhookUrl" placeholder="Enter Discord webhook URL">
+                                    <div class="input-group-append">
+                                        <span class="input-group-text" id="deleteWebhook">&times;</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                            <button type="button" class="btn btn-primary" id="saveWebhook">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         <h2>Node Map</h2>
         <div id="map"></div>
@@ -143,6 +189,7 @@
     <div class="footer-buttons">
         <button class="btn btn-secondary" id="debugBtn">Debug</button>
         <button class="btn btn-secondary" id="settingsBtn">Settings</button>
+        <button class="btn btn-secondary" id="discordWebhookBtn">Discord Webhook</button>
 
     </div>
 </body>
@@ -163,6 +210,8 @@
         var map;
         var markers = {};
         var messageTimeouts = {};
+        var discordWebhook = '';
+        var myNodeInfo = null;
 
 
         function initializeData() {
@@ -219,6 +268,41 @@
             }).addTo(map);
         }
 
+        $('#discordWebhookBtn').click(function() {
+                $('#discordWebhookModal').modal('show');
+                loadWebhookUrl();
+            });
+
+            $('#saveWebhook').click(function() {
+                var url = $('#webhookUrl').val().trim();
+                if (url) {
+                    saveWebhookUrl(url);
+                    $('#discordWebhookModal').modal('hide');
+                } else {
+                    alert('Please enter a valid webhook URL.');
+                }
+            });
+
+            $('#deleteWebhook').click(function() {
+                deleteWebhookUrl();
+                $('#webhookUrl').val('');
+            });
+
+            function loadWebhookUrl() {
+                socket.emit('load_webhook_url');
+                logDebugMessage('Requesting Discord webhook URL');
+            }
+
+            function saveWebhookUrl(url) {
+                socket.emit('save_webhook_url', { url: url });
+                logDebugMessage('Saving Discord webhook URL: ' + url);
+            }
+
+            function deleteWebhookUrl() {
+                socket.emit('delete_webhook_url');
+                logDebugMessage('Deleting Discord webhook URL');
+            }
+
         function updateMap() {
             var bounds = L.latLngBounds();
             var hasValidPositionNode = false;
@@ -259,6 +343,92 @@
         return `${days}d ${hours}h ${minutes}m ${remainingSeconds}s`;
     }    
 
+    function getMyNodeName() {
+            return myNodeInfo ? `${myNodeInfo.user.longName} (${myNodeInfo.user.shortName})` : 'My Node';
+        }
+
+    function updateMyNodeInfo(nodeInfo) {
+            myNodeInfo = nodeInfo;
+            logDebugMessage('My node info updated: ' + JSON.stringify(myNodeInfo));
+        }
+
+        function sendToDiscordWebhook(message) {
+            console.log("Attempting to send to Discord webhook:", message);
+            if (!discordWebhook) {
+                console.log('Cannot send to Discord: No webhook URL set');
+                return;
+            }
+
+            var senderName = message.sender;
+            var senderNode = null;
+            if (senderName === 'You' && myNodeInfo) {
+                senderName = myNodeInfo.user.longName || myNodeInfo.user.shortName || 'My Node';
+                senderNode = myNodeInfo;
+            } else {
+                senderNode = Object.values(nodes).find(node => 
+                    (node.user && node.user.longName === senderName) || 
+                    (node.user && node.user.shortName === senderName) ||
+                    node.num === senderName
+                );
+            }
+
+            var deviceInfo = "Unknown Device";
+            if (senderNode && senderNode.user) {
+                deviceInfo = senderNode.user.hwModel || "Meshtastic Device";
+                if (senderNode.deviceMetrics && senderNode.deviceMetrics.batteryLevel) {
+                    deviceInfo += ` (🔋 ${senderNode.deviceMetrics.batteryLevel}%)`;
+                }
+            }
+
+            var channelName = currentChannel === 0 ? 'PRIMARY' : `Channel ${currentChannel}`;
+            var timestamp = new Date(message.timestamp * 1000).toISOString();
+
+            var embed = {
+                title: "📡 New Meshtastic Message",
+                description: message.text,
+                color: 3447003, 
+                fields: [
+                    {
+                        name: "👤 From",
+                        value: senderName
+                    },
+                    {
+                        name: "🔧 Device",
+                        value: deviceInfo
+                    },
+                    {
+                        name: "📢 Channel",
+                        value: channelName
+                    }
+                ],
+                footer: {
+                    text: "Meshtastic"
+                },
+                timestamp: timestamp
+            };
+
+            if (senderNode && senderNode.position && senderNode.position.latitude && senderNode.position.longitude) {
+                embed.fields.push({
+                    name: "📍 Location",
+                    value: `[View on Map](https://www.google.com/maps?q=${senderNode.position.latitude},${senderNode.position.longitude})`
+                });
+            }
+
+            $.ajax({
+                url: discordWebhook,
+                type: 'POST',
+                data: JSON.stringify({ embeds: [embed] }),
+                contentType: 'application/json',
+                success: function(response) {
+                    console.log('Message sent to Discord webhook successfully');
+                },
+                error: function(xhr, status, error) {
+                    console.error('Error sending message to Discord webhook:', error);
+                    console.error('Response:', xhr.responseText);
+                }
+            });
+        }
+
     $('#nodeSortSelect').change(function() {
         updateNodeInfo();
     });
@@ -266,6 +436,21 @@
     $('#nodeFilterInput').on('input', function() {
         updateNodeInfo();
     });
+
+    function updateMyNodeInfo(nodeInfo) {
+        myNodeInfo = nodeInfo;
+        logDebugMessage('My node info updated: ' + JSON.stringify(myNodeInfo));
+    }
+
+    function updateNode(nodeData) {
+        var nodeId = nodeData.num;
+        if (!nodes[nodeId]) {
+            nodes[nodeId] = {};
+        }
+        nodes[nodeId] = Object.assign({}, nodes[nodeId], nodeData);
+        updateNodeInfo();
+        updateMap();
+    }
 
     function updateNodeInfo() {
         var nodeCount = Object.keys(nodes).length;
@@ -381,15 +566,18 @@
         }
 
         messages[currentChannel].forEach(function(msg) {
+            if (!msg || !msg.text) {
+                console.log("Invalid message:", msg);
+                return;  
+            }
+            
             var messageText;
+            var senderName = msg.sender === 'You' ? getMyNodeName() : msg.sender;
             var statusDot = msg.sender === 'You' ? 
                 (msg.status === 'pending' ? '🟡' : (msg.status === 'acked' ? '🟢' : '🔴')) : '🟢';
             
-            if (msg.sender === 'You') {
-                messageText = `${statusDot} <strong>You:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()} (ID: ${msg.packetId})</small>`;
-            } else {
-                messageText = `${statusDot} ${msg.formatted_message || `<strong>${msg.sender}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()}</small>`}`;
-            }
+            messageText = `${statusDot} <strong>${senderName}:</strong><br>${msg.text}<br><small>${new Date(msg.timestamp * 1000).toLocaleString()} (ID: ${msg.packetId})</small>`;
+            
             messagesContainer.append('<p>' + messageText + '</p><hr>');
         });
 
@@ -439,7 +627,7 @@
         if (message) {
             socket.emit('send_message', { message: message, channel: currentChannel });
             logDebugMessage('Sending message: "' + message + '" on channel ' + currentChannel);
-            $('#messageInput').val(''); 
+            $('#messageInput').val('');
         } else {
             logDebugMessage('Error: Empty message');
             alert('Please enter a message before sending.');
@@ -465,6 +653,11 @@
         $('#connectBtn').prop('disabled', true).removeClass('btn-primary').addClass('btn-secondary');
         $('#disconnectBtn').prop('disabled', false).removeClass('btn-secondary').addClass('btn-danger');
         $('#sendBtn').prop('disabled', false).removeClass('btn-secondary').addClass('btn-success');
+
+        if (data.initialNodeInfo) {
+            updateMyNodeInfo(data.initialNodeInfo);
+            updateNode(data.initialNodeInfo);
+        }
     });
 
     socket.on('serial_disconnected', function() {
@@ -509,37 +702,68 @@
         if (!messages[messageData.channel]) {
             messages[messageData.channel] = [];
         }
-        messages[messageData.channel].push(messageData);
+        
+        var existingMessageIndex = messages[messageData.channel].findIndex(function(msg) {
+            return msg.packetId === messageData.packetId;
+        });
+        
+        if (existingMessageIndex !== -1) {
+            messages[messageData.channel][existingMessageIndex] = messageData;
+        } else {
+            messages[messageData.channel].push(messageData);
+        }
+        
         if (messageData.channel === currentChannel) {
             updateMessages();
+            console.log("Sending message to Discord webhook:", messageData);
+            sendToDiscordWebhook(messageData);
         }
     });
 
     socket.on('message_sent', function(data) {
         if (data.status === 'success') {
             logDebugMessage('Message sent successfully');
+            var sentMessage = {
+                sender: 'You',
+                text: data.message, 
+                channel: data.channel,
+                timestamp: data.timestamp || Math.floor(Date.now() / 1000),
+                packetId: data.packetId,
+                status: 'pending'
+            };
+            if (!messages[data.channel]) {
+                messages[data.channel] = [];
+            }
+            messages[data.channel].push(sentMessage);
+            updateMessages();
+            
             messageTimeouts[data.packetId] = setTimeout(function() {
                 updateMessageStatus(data.packetId, 'timeout');
-            }, 60000); 
+            }, 60000);
         } else {
             logDebugMessage('Error sending message: ' + data.message);
         }
     });
 
     socket.on('node_updated', function(data) {
-        logDebugMessage('Node updated: ' + JSON.stringify(data));
-        if (!data.num && !(data.user && data.user.id)) {
-            logDebugMessage('Error: Invalid node data');
-            return;
-        }
-        var nodeId = data.num || (data.user && data.user.id);
-        if (!nodes[nodeId]) {
-            nodes[nodeId] = {};
-        }
-        nodes[nodeId] = Object.assign({}, nodes[nodeId], data);
-        updateNodeInfo();
-        updateMap();
-    });
+            logDebugMessage('Node updated: ' + JSON.stringify(data));
+            if (!data.num && !(data.user && data.user.id)) {
+                logDebugMessage('Error: Invalid node data');
+                return;
+            }
+            var nodeId = data.num || (data.user && data.user.id);
+            if (!nodes[nodeId]) {
+                nodes[nodeId] = {};
+            }
+            nodes[nodeId] = Object.assign({}, nodes[nodeId], data);
+            
+            if (data.isLocal) {
+                updateMyNodeInfo(data);
+            }
+            
+            updateNodeInfo();
+            updateMap();
+        });
 
     socket.on('message_ack', function(data) {
         logDebugMessage('ACK received for packet ID: ' + data.packetId);
@@ -556,6 +780,23 @@
             updateMessageStatus(data.packetId, 'timeout');
             delete messageTimeouts[data.packetId];
         }
+    });
+
+    socket.on('webhook_url_loaded', function(data) {
+        discordWebhook = data.url;
+        $('#webhookUrl').val(discordWebhook);
+        $('#deleteWebhook').toggle(!!discordWebhook);
+        console.log('Discord webhook URL loaded:', discordWebhook ? 'URL set' : 'No URL');
+    });
+
+    socket.on('webhook_url_saved', function(data) {
+        discordWebhook = data.url;
+        logDebugMessage('Discord webhook URL saved: ' + discordWebhook);
+    });
+
+    socket.on('webhook_url_deleted', function() {
+        discordWebhook = '';
+        logDebugMessage('Discord webhook URL deleted');
     });
 
     function updateMessageStatus(packetId, status) {

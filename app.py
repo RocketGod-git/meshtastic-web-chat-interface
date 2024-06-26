@@ -7,6 +7,7 @@ import serial.tools.list_ports
 
 import json
 import logging
+import os
 
 import meshtastic
 from meshtastic.serial_interface import SerialInterface
@@ -19,7 +20,10 @@ from pubsub import pub
 import time
 from datetime import datetime
 import asyncio
+import threading
 from threading import Event
+import requests
+
 from google.protobuf.json_format import MessageToDict
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,8 +36,13 @@ available_channels = []
 found_nodes = {}
 received_messages = []
 messages = {}
+
 app.config['received_messages'] = received_messages
 app.config['messages'] = {}
+
+connection_timeout = None
+
+WEBHOOK_FILE = 'discord_webhook.json'
 
 def list_serial_ports():
     try:
@@ -43,25 +52,65 @@ def list_serial_ports():
         return []
 
 def connect_serial(port):
+    global connection_timeout
+    
     try:
+        def timeout_handler():
+            logging.error("Timed out waiting for connection completion")
+            safe_emit('serial_error', {'message': 'Connection timed out'})
+
+        connection_timeout = threading.Timer(60, timeout_handler)
+        connection_timeout.start()
+
         interface = SerialInterface(port)
         logging.info(f"Interface created: {interface}")
+
+        if connection_timeout:
+            connection_timeout.cancel()
+            connection_timeout = None
 
         pub.subscribe(on_receive, "meshtastic.receive")
         pub.subscribe(on_connection, "meshtastic.connection.established")
         
         interface.on_received = on_receive
 
-        safe_emit('serial_connected', {'port': port})
+        my_info = interface.getMyNodeInfo()
+        app.config['my_node_id'] = my_info['num']
+        
+        initial_node_info = {
+            'num': my_info['num'],
+            'user': {
+                'id': my_info['user']['id'],
+                'longName': my_info['user']['longName'],
+                'shortName': my_info['user']['shortName'],
+                'macaddr': my_info['user']['macaddr'],
+                'hwModel': my_info['user']['hwModel']
+            },
+            'position': my_info.get('position', {}),
+            'lastHeard': my_info.get('lastHeard'),
+            'deviceMetrics': my_info.get('deviceMetrics', {}),
+            'isLocal': True
+        }
+
+        update_node(initial_node_info['num'], initial_node_info)
+
+        safe_emit('serial_connected', {'port': port, 'initialNodeInfo': initial_node_info})
         logging.info(f"Connected to Meshtastic device on {port}")
         return interface
     except Exception as e:
+        if connection_timeout:
+            connection_timeout.cancel()
+            connection_timeout = None
         logging.error(f"Error connecting to Meshtastic device: {e}")
         safe_emit('serial_error', {'message': str(e)})
         return None
 
 def on_connection(interface, topic=pub.AUTO_TOPIC):
-    global available_channels, received_messages
+    global connection_timeout, available_channels, received_messages
+    if connection_timeout:
+        connection_timeout.cancel()
+        connection_timeout = None
+
     pub.subscribe(on_receive, "meshtastic.receive")
     pub.subscribe(on_connection, "meshtastic.connection.established")
     logging.info("Connected to Meshtastic device")
@@ -501,26 +550,40 @@ def handle_send_message(data):
             packet_id = mesh_packet.id
             logging.info(f"Sent message: '{message}' on channel {channel_index} with packet ID: {packet_id}")
             
-            sent_message = {
-                'sender': 'You',  
-                'text': message,
-                'channel': channel_index,
-                'timestamp': int(time.time()),
+            try:
+                with open(WEBHOOK_FILE, 'r') as f:
+                    webhook_data = json.load(f)
+                    webhook_url = webhook_data.get('url')
+                
+                if webhook_url:
+                    webhook_payload = {
+                        "embeds": [{
+                            "title": "📡 New Meshtastic Message",
+                            "description": message,
+                            "color": 3447003,
+                            "fields": [
+                                {"name": "👤 From", "value": "You"},
+                                {"name": "📢 Channel", "value": f"Channel {channel_index}"}
+                            ],
+                            "footer": {"text": "Meshtastic"},
+                            "timestamp": datetime.utcnow().isoformat()
+                        }]
+                    }
+                    response = requests.post(webhook_url, json=webhook_payload)
+                    response.raise_for_status()
+                    logging.info("Message sent to Discord webhook successfully")
+                else:
+                    logging.info("No Discord webhook URL set")
+            except Exception as e:
+                logging.error(f"Error sending to Discord webhook: {e}")
+
+            socketio.emit('message_sent', {
+                'status': 'success',
                 'packetId': packet_id,
-                'status': 'pending'
-            }
-            
-            if 'messages' not in app.config:
-                app.config['messages'] = {}
-            
-            if channel_index not in app.config['messages']:
-                app.config['messages'][channel_index] = []
-            app.config['messages'][channel_index].append(sent_message)
-            
-            socketio.emit('new_message', {'raw_message': sent_message})
-            logging.debug(f"Emitted new_message event for sent message: {sent_message}")
-            
-            socketio.emit('message_sent', {'status': 'success', 'packetId': packet_id})
+                'message': message,
+                'channel': channel_index,
+                'timestamp': int(time.time())
+            })
             
             socketio.start_background_task(wait_for_ack, interface, packet_id)
         else:
@@ -530,6 +593,45 @@ def handle_send_message(data):
         logging.error(f"Error in send_message: {str(e)}")
         logging.exception("Stack trace:")
         socketio.emit('serial_error', {'message': str(e)})
+
+@socketio.on('load_webhook_url')
+def handle_load_webhook_url():
+    try:
+        if os.path.exists(WEBHOOK_FILE):
+            with open(WEBHOOK_FILE, 'r') as f:
+                data = json.load(f)
+                url = data.get('url', '')
+                logging.info(f"Loaded Discord webhook URL: {'Set' if url else 'Not set'}")
+                socketio.emit('webhook_url_loaded', {'url': url})
+        else:
+            logging.info("Discord webhook file does not exist")
+            socketio.emit('webhook_url_loaded', {'url': ''})
+    except Exception as e:
+        logging.error(f"Error loading webhook URL: {e}")
+        socketio.emit('webhook_url_loaded', {'url': ''})
+
+@socketio.on('save_webhook_url')
+def handle_save_webhook_url(data):
+    try:
+        url = data.get('url', '')
+        with open(WEBHOOK_FILE, 'w') as f:
+            json.dump({'url': url}, f)
+        logging.info(f"Saved Discord webhook URL: {'Set' if url else 'Not set'}")
+        socketio.emit('webhook_url_saved', {'url': url})
+    except Exception as e:
+        logging.error(f"Error saving webhook URL: {e}")
+
+@socketio.on('delete_webhook_url')
+def handle_delete_webhook_url():
+    try:
+        if os.path.exists(WEBHOOK_FILE):
+            os.remove(WEBHOOK_FILE)
+            logging.info("Deleted Discord webhook URL")
+        else:
+            logging.info("No Discord webhook URL to delete")
+        socketio.emit('webhook_url_deleted')
+    except Exception as e:
+        logging.error(f"Error deleting webhook URL: {e}")
 
 ack_events = {}
 

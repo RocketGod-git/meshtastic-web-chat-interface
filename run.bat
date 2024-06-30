@@ -14,6 +14,9 @@ python -m pip install --upgrade pip
 echo Installing required packages...
 pip install flask flask-socketio flask-cors pyserial meshtastic
 
+echo Switching to the application directory...
+cd /d %~dp0
+
 echo Starting the Flask application...
 python app.py
 

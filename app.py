@@ -502,24 +502,6 @@ def handle_connect():
         logging.error(f"Error checking webhook file on connect: {e}")
 
 
-@socketio.on('use_saved_webhook')
-def handle_use_saved_webhook(data):
-    try:
-        url = data.get('url', '')
-        with open(WEBHOOK_FILE, 'w') as f:
-            json.dump({'url': url}, f)
-        logging.info(f"Using saved Discord webhook URL for this session: {'Set' if url else 'Not set'}")
-        socketio.emit('webhook_url_loaded', {'url': url})
-    except Exception as e:
-        logging.error(f"Error using saved webhook URL: {e}")
-
-
-@socketio.on('decline_saved_webhook')
-def handle_decline_saved_webhook():
-    logging.info("User declined to use the saved Discord webhook URL")
-    socketio.emit('webhook_url_loaded', {'url': ''})
-
-
 @socketio.on('connect_serial')
 def handle_connect_serial(data):
     try:

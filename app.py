@@ -491,11 +491,33 @@ def error_handler(e):
 @socketio.on('connect')
 def handle_connect():
     logging.info("WebSocket client connected")
+    try:
+        if os.path.exists(WEBHOOK_FILE):
+            with open(WEBHOOK_FILE, 'r') as f:
+                data = json.load(f)
+                url = data.get('url', '')
+                if url:
+                    socketio.emit('prompt_webhook', {'url': url})
+    except Exception as e:
+        logging.error(f"Error checking webhook file on connect: {e}")
 
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    logging.info("WebSocket client disconnected")
+@socketio.on('use_saved_webhook')
+def handle_use_saved_webhook(data):
+    try:
+        url = data.get('url', '')
+        with open(WEBHOOK_FILE, 'w') as f:
+            json.dump({'url': url}, f)
+        logging.info(f"Using saved Discord webhook URL for this session: {'Set' if url else 'Not set'}")
+        socketio.emit('webhook_url_loaded', {'url': url})
+    except Exception as e:
+        logging.error(f"Error using saved webhook URL: {e}")
+
+
+@socketio.on('decline_saved_webhook')
+def handle_decline_saved_webhook():
+    logging.info("User declined to use the saved Discord webhook URL")
+    socketio.emit('webhook_url_loaded', {'url': ''})
 
 
 @socketio.on('connect_serial')
@@ -549,13 +571,23 @@ def handle_send_message(data):
             mesh_packet = interface.sendText(message, channelIndex=channel_index, wantAck=True)
             packet_id = mesh_packet.id
             logging.info(f"Sent message: '{message}' on channel {channel_index} with packet ID: {packet_id}")
-            
-            # Send to Discord webhook
+
+            complete_message_data = {
+                'packetId': packet_id,
+                'message': message,
+                'channel': channel_index,
+                'timestamp': int(time.time())
+            }
+
+            if channel_index not in app.config['messages']:
+                app.config['messages'][channel_index] = []
+            app.config['messages'][channel_index].append(complete_message_data)
+
             try:
                 with open(WEBHOOK_FILE, 'r') as f:
                     webhook_data = json.load(f)
                     webhook_url = webhook_data.get('url')
-                
+
                 if webhook_url:
                     my_node_info = interface.getMyNodeInfo()
                     device_info = my_node_info.get('user', {}).get('hwModel', 'Unknown Device')
@@ -598,7 +630,7 @@ def handle_send_message(data):
                 'channel': channel_index,
                 'timestamp': int(time.time())
             })
-            
+
             socketio.start_background_task(wait_for_ack, interface, packet_id)
         else:
             logging.error("Serial interface not connected")
@@ -607,7 +639,7 @@ def handle_send_message(data):
         logging.error(f"Error in send_message: {str(e)}")
         logging.exception("Stack trace:")
         socketio.emit('serial_error', {'message': str(e)})
-        
+
 @socketio.on('load_webhook_url')
 def handle_load_webhook_url():
     try:

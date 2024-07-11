@@ -1,0 +1,123 @@
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+    padding-bottom: 60px; 
+}
+@media (max-width: 768px) {
+    .footer-buttons {
+        padding: 5px;
+    }
+    
+    .footer-buttons .btn {
+        margin: 2px;
+        padding: 6px 10px;
+        font-size: 0.9em;
+    }
+}
+.container {
+    max-width: 1200px;
+}
+.card {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+.form-control, .btn {
+    background-color: #2c2c2c;
+    color: #e0e0e0;
+    border-color: #3c3c3c;
+}
+.form-control:focus {
+    background-color: #3c3c3c;
+    color: #ffffff;
+}
+#connectBtn {
+    background-color: #007bff;
+    border-color: #007bff;
+}
+#disconnectBtn {
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+#sendBtn {
+    background-color: #28a745;
+    border-color: #28a745;
+}
+#map {
+    height: 400px;
+    margin-bottom: 20px;
+}
+#messagesContainer, #nodeInfo {
+    height: 500px;
+}
+.footer-buttons {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: #1e1e1e;
+    padding: 10px;
+    text-align: center;
+    z-index: 1000;
+    transition: transform 0.3s ease-in-out;
+}
+
+.footer-buttons.hidden {
+    transform: translateY(100%);
+}
+
+.footer-buttons .btn {
+    margin: 0 5px;
+}
+
+.footer-buttons .btn-dark {
+    background-color: #24292e;
+    border-color: #24292e;
+}
+
+.footer-buttons .btn-dark:hover {
+    background-color: #2b3137;
+    border-color: #2b3137;
+}
+
+.footer-buttons .btn-discord {
+    background-color: #7289da;
+    border-color: #7289da;
+    color: white;
+}
+
+.footer-buttons .btn-discord:hover {
+    background-color: #677bc4;
+    border-color: #677bc4;
+}
+
+.footer-buttons .bi-github,
+.footer-buttons .bi-discord {
+    margin-right: 5px;
+}
+#debugContainer {
+    display: none;
+    margin-bottom: 20px;
+}
+#debugWindow {
+    height: 300px;
+    overflow-y: scroll;
+}
+.modal-content {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+.modal-header, .modal-footer {
+    border-color: #3c3c3c;
+}
+.close {
+    color: #e0e0e0;
+}
+#webhookUrl {
+    width: calc(100% - 40px);
+    display: inline-block;
+}
+#deleteWebhook {
+    color: #dc3545;
+    cursor: pointer;
+    margin-left: 10px;
+}

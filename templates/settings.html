@@ -4,13 +4,265 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Meshtastic Settings</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .form-group { margin-bottom: 1rem; }
+        .card { margin-bottom: 1rem; }
+        .custom-switch { margin-bottom: 1rem; }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Meshtastic Settings</h1>
-        <p>This page is under construction. Settings will be available here in the future.</p>
-        <a href="/" class="btn btn-primary">Back to Main Page</a>
+    <div class="container mt-4">
+        <h1 class="mb-4">Meshtastic Settings</h1>
+        <form id="settingsForm">
+            <div class="card">
+                <div class="card-header">General Settings</div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="deviceName">Device Name</label>
+                        <input type="text" class="form-control" id="deviceName" placeholder="Enter device name">
+                    </div>
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="serialEnabled">
+                        <label class="custom-control-label" for="serialEnabled">Serial Enabled</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="nodeInfoBroadcastSecs">Node Info Broadcast Interval (seconds)</label>
+                        <input type="number" class="form-control" id="nodeInfoBroadcastSecs">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Position Settings</div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="positionBroadcastSecs">Position Broadcast Interval (seconds)</label>
+                        <input type="number" class="form-control" id="positionBroadcastSecs">
+                    </div>
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="fixedPosition">
+                        <label class="custom-control-label" for="fixedPosition">Fixed Position</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="gpsUpdateInterval">GPS Update Interval (seconds)</label>
+                        <input type="number" class="form-control" id="gpsUpdateInterval">
+                    </div>
+                    <div class="form-group">
+                        <label for="positionFlags">Position Flags</label>
+                        <input type="number" class="form-control" id="positionFlags">
+                    </div>
+                    <div class="form-group">
+                        <label for="latitude">Latitude</label>
+                        <input type="number" step="any" class="form-control" id="latitude">
+                    </div>
+                    <div class="form-group">
+                        <label for="longitude">Longitude</label>
+                        <input type="number" step="any" class="form-control" id="longitude">
+                    </div>
+                    <div class="form-group">
+                        <label for="altitude">Altitude</label>
+                        <input type="number" class="form-control" id="altitude">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Radio Settings</div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="region">Region</label>
+                        <select class="form-control" id="region">
+                            <option value="US">United States</option>
+                            <option value="EU_433">Europe 433</option>
+                            <option value="EU_868">Europe 868</option>
+                            <option value="CN">China</option>
+                            <option value="JP">Japan</option>
+                            <option value="ANZ">Australia/New Zealand</option>
+                            <option value="RU">Russia</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="txPower">TX Power</label>
+                        <input type="number" class="form-control" id="txPower">
+                    </div>
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="txEnabled">
+                        <label class="custom-control-label" for="txEnabled">TX Enabled</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Power Settings</div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="waitBluetoothSecs">Wait Bluetooth (seconds)</label>
+                        <input type="number" class="form-control" id="waitBluetoothSecs">
+                    </div>
+                    <div class="form-group">
+                        <label for="screenOnSecs">Screen On Time (seconds)</label>
+                        <input type="number" class="form-control" id="screenOnSecs">
+                    </div>
+                    <div class="form-group">
+                        <label for="sdsSecs">Sleep Duration (seconds)</label>
+                        <input type="number" class="form-control" id="sdsSecs">
+                    </div>
+                    <div class="form-group">
+                        <label for="lsSecs">Light Sleep Duration (seconds)</label>
+                        <input type="number" class="form-control" id="lsSecs">
+                    </div>
+                    <div class="form-group">
+                        <label for="minWakeSecs">Minimum Wake Time (seconds)</label>
+                        <input type="number" class="form-control" id="minWakeSecs">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Network Settings</div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label for="ntpServer">NTP Server</label>
+                        <input type="text" class="form-control" id="ntpServer">
+                    </div>
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="ethEnabled">
+                        <label class="custom-control-label" for="ethEnabled">Ethernet Enabled</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Bluetooth Settings</div>
+                <div class="card-body">
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="bluetoothEnabled">
+                        <label class="custom-control-label" for="bluetoothEnabled">Bluetooth Enabled</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="fixedPin">Fixed PIN</label>
+                        <input type="number" class="form-control" id="fixedPin">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">MQTT Settings</div>
+                <div class="card-body">
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="mqttEnabled">
+                        <label class="custom-control-label" for="mqttEnabled">MQTT Enabled</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="mqttAddress">MQTT Address</label>
+                        <input type="text" class="form-control" id="mqttAddress">
+                    </div>
+                    <div class="form-group">
+                        <label for="mqttUsername">MQTT Username</label>
+                        <input type="text" class="form-control" id="mqttUsername">
+                    </div>
+                    <div class="form-group">
+                        <label for="mqttPassword">MQTT Password</label>
+                        <input type="password" class="form-control" id="mqttPassword">
+                    </div>
+                    <div class="custom-control custom-switch">
+                        <input type="checkbox" class="custom-control-input" id="mqttEncryptionEnabled">
+                        <label class="custom-control-label" for="mqttEncryptionEnabled">MQTT Encryption Enabled</label>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary mb-3">Save Settings</button>
+        </form>
+        <div id="saveStatus" class="alert" role="alert"></div>
+        <a href="/" class="btn btn-secondary mb-3">Back to Main Page</a>
     </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            const socket = io();
+            socket.on('connect', function() {
+                socket.emit('get_settings');
+            });
+
+            socket.on('settings_data', function(data) {
+                $('#deviceName').val(data.deviceName);
+                $('#serialEnabled').prop('checked', data.serialEnabled);
+                $('#nodeInfoBroadcastSecs').val(data.nodeInfoBroadcastSecs);
+                $('#positionBroadcastSecs').val(data.positionBroadcastSecs);
+                $('#fixedPosition').prop('checked', data.fixedPosition);
+                $('#gpsUpdateInterval').val(data.gpsUpdateInterval);
+                $('#positionFlags').val(data.positionFlags);
+                $('#latitude').val(data.latitude);
+                $('#longitude').val(data.longitude);
+                $('#altitude').val(data.altitude);
+                $('#region').val(data.region);
+                $('#txPower').val(data.txPower);
+                $('#txEnabled').prop('checked', data.txEnabled);
+                $('#waitBluetoothSecs').val(data.waitBluetoothSecs);
+                $('#screenOnSecs').val(data.screenOnSecs);
+                $('#sdsSecs').val(data.sdsSecs);
+                $('#lsSecs').val(data.lsSecs);
+                $('#minWakeSecs').val(data.minWakeSecs);
+                $('#ntpServer').val(data.ntpServer);
+                $('#ethEnabled').prop('checked', data.ethEnabled);
+                $('#bluetoothEnabled').prop('checked', data.bluetoothEnabled);
+                $('#fixedPin').val(data.fixedPin);
+                $('#mqttEnabled').prop('checked', data.mqttEnabled);
+                $('#mqttAddress').val(data.mqttAddress);
+                $('#mqttUsername').val(data.mqttUsername);
+                $('#mqttPassword').val(data.mqttPassword);
+                $('#mqttEncryptionEnabled').prop('checked', data.mqttEncryptionEnabled);
+            });
+
+            $('#settingsForm').submit(function(event) {
+                event.preventDefault();
+                const settings = {
+                    deviceName: $('#deviceName').val(),
+                    serialEnabled: $('#serialEnabled').prop('checked'),
+                    nodeInfoBroadcastSecs: $('#nodeInfoBroadcastSecs').val(),
+                    positionBroadcastSecs: $('#positionBroadcastSecs').val(),
+                    fixedPosition: $('#fixedPosition').prop('checked'),
+                    gpsUpdateInterval: $('#gpsUpdateInterval').val(),
+                    positionFlags: $('#positionFlags').val(),
+                    latitude: $('#latitude').val(),
+                    longitude: $('#longitude').val(),
+                    altitude: $('#altitude').val(),
+                    region: $('#region').val(),
+                    txPower: $('#txPower').val(),
+                    txEnabled: $('#txEnabled').prop('checked'),
+                    waitBluetoothSecs: $('#waitBluetoothSecs').val(),
+                    screenOnSecs: $('#screenOnSecs').val(),
+                    sdsSecs: $('#sdsSecs').val(),
+                    lsSecs: $('#lsSecs').val(),
+                    minWakeSecs: $('#minWakeSecs').val(),
+                    ntpServer: $('#ntpServer').val(),
+                    ethEnabled: $('#ethEnabled').prop('checked'),
+                    bluetoothEnabled: $('#bluetoothEnabled').prop('checked'),
+                    fixedPin: $('#fixedPin').val(),
+                    mqttEnabled: $('#mqttEnabled').prop('checked'),
+                    mqttAddress: $('#mqttAddress').val(),
+                    mqttUsername: $('#mqttUsername').val(),
+                    mqttPassword: $('#mqttPassword').val(),
+                    mqttEncryptionEnabled: $('#mqttEncryptionEnabled').prop('checked')
+                };
+
+                socket.emit('save_settings', settings);
+            });
+
+            socket.on('save_success', function() {
+                $('#saveStatus').removeClass('alert-danger').addClass('alert-success').text('Settings saved successfully').show();
+            });
+
+            socket.on('save_error', function(error) {
+                $('#saveStatus').removeClass('alert-success').addClass('alert-danger').text('Error saving settings: ' + error.message).show();
+            });
+        });
+    </script>
 </body>
 </html>
